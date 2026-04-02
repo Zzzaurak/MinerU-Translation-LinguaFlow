@@ -1,0 +1,8 @@
+{
+  "api_token": "YOUR_MINERU_API_TOKEN",
+  "api_base_url": "https://mineru.net/api/v4",
+  "model_version": "pipeline",
+  "poll_interval_sec": 5,
+  "max_poll_min": 30,
+  "retry_max": 3
+}

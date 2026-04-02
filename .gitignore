@@ -1,0 +1,38 @@
+# --- Project internals ---
+.sisyphus/
+
+# --- Secrets / local config ---
+# Contains real API token, never commit
+mineru.config.json
+# Desktop app local config (contains client_api_token)
+config.json
+.env
+.env.*
+!.env.example
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- Virtual environments ---
+.venv/
+venv/
+
+# --- OS / editor ---
+.DS_Store
+.idea/
+.vscode/
+
+# --- Runtime outputs ---
+out/
+inbox/
+data/*.db
