@@ -4,5 +4,13 @@
   "model_version": "pipeline",
   "poll_interval_sec": 5,
   "max_poll_min": 30,
-  "retry_max": 3
+  "retry_max": 3,
+
+  "translation_enabled": false,
+  "translation_api_base_url": "https://api.openai.com/v1",
+  "translation_api_key": "YOUR_TRANSLATION_API_KEY",
+  "translation_model": "gpt-4o-mini",
+  "translation_target_language": "zh-CN",
+  "translation_timeout_sec": 30,
+  "translation_retry_max": 3
 }

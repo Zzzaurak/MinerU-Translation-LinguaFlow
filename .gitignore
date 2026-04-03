@@ -34,5 +34,9 @@ venv/
 
 # --- Runtime outputs ---
 out/
-inbox/
+inbox/*
+!inbox/.gitkeep
 data/*.db
+
+# --- Test fixtures ---
+tests/fixtures/inbox/

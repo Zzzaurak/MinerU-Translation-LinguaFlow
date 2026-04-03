@@ -38,9 +38,37 @@
   "model_version": "pipeline",
   "poll_interval_sec": 5,
   "max_poll_min": 30,
-  "retry_max": 3
+  "retry_max": 3,
+
+  "translation_enabled": false,
+  "translation_api_base_url": "https://api.openai.com/v1",
+  "translation_api_key": "你的_翻译_API_Key",
+  "translation_model": "gpt-4o-mini",
+  "translation_target_language": "zh-CN",
+  "translation_timeout_sec": 30,
+  "translation_retry_max": 3
 }
 ```
+
+### 可选：开启英文→中文翻译后处理
+
+当 `translation_enabled=true` 时，CLI 会把标准化后的 `document.md` 发送到 OpenAI-compatible 翻译 API，返回中文 Markdown 并输出 `document.zh.md`。
+
+推荐最小配置：
+
+```json
+{
+  "translation_enabled": true,
+  "translation_api_base_url": "https://api.openai.com/v1",
+  "translation_api_key": "你的_翻译_API_Key",
+  "translation_model": "gpt-4o-mini",
+  "translation_target_language": "zh-CN"
+}
+```
+
+翻译失败策略：
+- 不影响原 `document.md` 与 `images/` 产出。
+- 在 `item.json` 与 `manifest.json` 记录翻译状态/错误。
 
 也可以继续使用环境变量（兼容旧方式）：
 
@@ -54,6 +82,13 @@ export MINERU_API_TOKEN="你的_MinerU_API_Key"
 - `MINERU_POLL_INTERVAL_SEC`（默认：`5`）
 - `MINERU_MAX_POLL_MIN`（默认：`30`）
 - `MINERU_RETRY_MAX`（默认：`3`）
+- `MINERU_TRANSLATION_ENABLED`（默认：`false`）
+- `MINERU_TRANSLATION_API_BASE_URL`（默认：`https://api.openai.com/v1`）
+- `MINERU_TRANSLATION_API_KEY`（默认：空；仅在开启翻译时必填）
+- `MINERU_TRANSLATION_MODEL`（默认：`gpt-4o-mini`）
+- `MINERU_TRANSLATION_TARGET_LANGUAGE`（默认：`zh-CN`）
+- `MINERU_TRANSLATION_TIMEOUT_SEC`（默认：`30`）
+- `MINERU_TRANSLATION_RETRY_MAX`（默认：`3`）
 
 ---
 
@@ -136,6 +171,13 @@ PYTHONPATH=src ./.venv/bin/python -m mineru_batch_cli run \
 - `--continue-on-error`：
   - `true`：某个文件失败也继续处理其他文件
   - `false`：遇错后停止后续处理
+- `--translation-enabled`：是否开启翻译阶段（`true | false`）
+- `--translation-api-base-url`：翻译 API 基地址（OpenAI-compatible）
+- `--translation-api-key`：翻译 API Key（开启翻译时必填）
+- `--translation-model`：翻译模型名
+- `--translation-target-language`：目标语言（默认 `zh-CN`）
+- `--translation-timeout-sec`：翻译请求超时秒数
+- `--translation-retry-max`：翻译请求重试次数
 
 ---
 
@@ -146,6 +188,7 @@ PYTHONPATH=src ./.venv/bin/python -m mineru_batch_cli run \
 - `manifest.json`：整批结果汇总（总数、成功数、失败数、每个文件状态等）
 - `items/<item_slug>/`：每个输入文件对应一个目录
   - `document.md`
+  - `document.zh.md`（仅 `translation_enabled=true` 且翻译成功时存在）
   - `images/`（仅保留 markdown 引用到的图片）
   - `item.json`
 
