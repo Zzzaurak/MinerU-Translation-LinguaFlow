@@ -11,6 +11,7 @@ class ItemOutput:
     item_slug: str
     item_dir: Path
     document_path: Path
+    translated_document_path: Path | None
     images_dir: Path
     item_json_path: Path
 
@@ -35,6 +36,7 @@ def write_item_output(
     output_root: Path,
     item_slug: str,
     document_source: Path,
+    translated_document_source: Path | None,
     images_source_dir: Path,
     item_metadata_json: str,
 ) -> ItemOutput:
@@ -46,6 +48,14 @@ def write_item_output(
 
     document_target = item_dir / "document.md"
     shutil.copy2(document_source, document_target)
+
+    translated_target: Path | None = None
+    if translated_document_source is not None:
+        translated_name = translated_document_source.name
+        if not translated_name:
+            translated_name = "document.zh.md"
+        translated_target = item_dir / translated_name
+        shutil.copy2(translated_document_source, translated_target)
 
     images_target = item_dir / "images"
     images_target.mkdir(parents=True, exist_ok=True)
@@ -61,6 +71,7 @@ def write_item_output(
         item_slug=item_slug,
         item_dir=item_dir,
         document_path=document_target,
+        translated_document_path=translated_target,
         images_dir=images_target,
         item_json_path=item_json_path,
     )
