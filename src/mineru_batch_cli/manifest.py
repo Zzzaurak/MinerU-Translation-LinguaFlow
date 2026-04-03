@@ -16,6 +16,9 @@ class ManifestItem:
     error_code: str | None
     error_message: str | None
     document_path: str | None
+    translated_document_path: str | None
+    translation_status: str | None
+    translation_error: str | None
     images_count: int
     warnings: list[str]
 
@@ -49,6 +52,9 @@ def build_manifest(
                 "error_code": item.error_code,
                 "error_message": item.error_message,
                 "document_path": item.document_path,
+                "translated_document_path": item.translated_document_path,
+                "translation_status": item.translation_status,
+                "translation_error": item.translation_error,
                 "images_count": item.images_count,
                 "warnings": item.warnings,
             }

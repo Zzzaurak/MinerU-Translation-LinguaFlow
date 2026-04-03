@@ -134,6 +134,9 @@ def test_verify_prints_manifest_ok_for_valid_manifest(tmp_path: Path, capsys) ->
                         "error_code": None,
                         "error_message": None,
                         "document_path": "items/a-pdf/document.md",
+                        "translated_document_path": "items/a-pdf/document.zh.md",
+                        "translation_status": "succeeded",
+                        "translation_error": None,
                         "images_count": 0,
                         "warnings": [],
                     }
@@ -197,6 +200,9 @@ def test_verify_rejects_wrong_item_field_types(tmp_path: Path, capsys) -> None:
                         "error_code": None,
                         "error_message": None,
                         "document_path": "items/a-pdf/document.md",
+                        "translated_document_path": None,
+                        "translation_status": None,
+                        "translation_error": None,
                         "images_count": "wrong",
                         "warnings": [],
                     }
@@ -210,3 +216,80 @@ def test_verify_rejects_wrong_item_field_types(tmp_path: Path, capsys) -> None:
     captured = capsys.readouterr()
     assert exit_code == 1
     assert "images_count must be an integer" in captured.err
+
+
+def test_verify_accepts_legacy_manifest_without_translation_fields(tmp_path: Path, capsys) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "run_id": "run-1",
+                "started_at": "2026-01-01T00:00:00Z",
+                "finished_at": "2026-01-01T00:00:01Z",
+                "input_root": "/tmp/in",
+                "output_root": "/tmp/out",
+                "total": 1,
+                "succeeded": 1,
+                "failed": 0,
+                "items": [
+                    {
+                        "input_path": "a.pdf",
+                        "item_slug": "a-pdf",
+                        "status": "succeeded",
+                        "error_code": None,
+                        "error_message": None,
+                        "document_path": "items/a-pdf/document.md",
+                        "images_count": 0,
+                        "warnings": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["verify", "--manifest", str(manifest)])
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "MANIFEST_OK" in captured.out
+
+
+def test_verify_rejects_invalid_translation_field_types(tmp_path: Path, capsys) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "run_id": "run-1",
+                "started_at": "2026-01-01T00:00:00Z",
+                "finished_at": "2026-01-01T00:00:01Z",
+                "input_root": "/tmp/in",
+                "output_root": "/tmp/out",
+                "total": 1,
+                "succeeded": 1,
+                "failed": 0,
+                "items": [
+                    {
+                        "input_path": "a.pdf",
+                        "item_slug": "a-pdf",
+                        "status": "succeeded",
+                        "error_code": None,
+                        "error_message": None,
+                        "document_path": "items/a-pdf/document.md",
+                        "translated_document_path": 123,
+                        "translation_status": "unknown",
+                        "translation_error": ["bad"],
+                        "images_count": 0,
+                        "warnings": [],
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["verify", "--manifest", str(manifest)])
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "translated_document_path must be string or null" in captured.err

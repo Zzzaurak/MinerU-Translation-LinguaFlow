@@ -32,7 +32,6 @@ REQUIRED_ITEM_KEYS = {
     "warnings",
 }
 
-
 def verify_manifest(path: Path) -> None:
     if not path.exists() or not path.is_file():
         raise VerifyError("manifest file not found")
@@ -87,6 +86,21 @@ def verify_manifest(path: Path) -> None:
         document_path = item.get("document_path")
         if document_path is not None and not isinstance(document_path, str):
             raise VerifyError(f"manifest items[{index}] document_path must be string or null")
+        translated_document_path = item.get("translated_document_path")
+        if translated_document_path is not None and not isinstance(translated_document_path, str):
+            raise VerifyError(
+                f"manifest items[{index}] translated_document_path must be string or null"
+            )
+        translation_status = item.get("translation_status")
+        if translation_status is not None and translation_status not in {"succeeded", "failed"}:
+            raise VerifyError(
+                f"manifest items[{index}] translation_status must be succeeded, failed, or null"
+            )
+        translation_error = item.get("translation_error")
+        if translation_error is not None and not isinstance(translation_error, str):
+            raise VerifyError(
+                f"manifest items[{index}] translation_error must be string or null"
+            )
         error_code = item.get("error_code")
         if error_code is not None and not isinstance(error_code, str):
             raise VerifyError(f"manifest items[{index}] error_code must be string or null")
