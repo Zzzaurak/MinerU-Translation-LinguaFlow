@@ -33,6 +33,13 @@ def test_run_help_includes_expected_arguments() -> None:
     assert "--model-version" in result.stdout
     assert "--continue-on-error" in result.stdout
     assert "--config" in result.stdout
+    assert "--translation-enabled" in result.stdout
+    assert "--translation-api-base-url" in result.stdout
+    assert "--translation-api-key" in result.stdout
+    assert "--translation-model" in result.stdout
+    assert "--translation-target-language" in result.stdout
+    assert "--translation-timeout-sec" in result.stdout
+    assert "--translation-retry-max" in result.stdout
 
 
 def test_verify_help_includes_manifest_argument() -> None:

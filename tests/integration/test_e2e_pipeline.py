@@ -7,6 +7,7 @@ from pathlib import Path
 
 from mineru_batch_cli.cli import main
 from mineru_batch_cli.http_client import HttpClient, HttpResponse
+from mineru_batch_cli.translation_client import OpenAICompatibleTranslationAdapter
 
 
 def _zip_bytes(markdown: str) -> bytes:
@@ -134,6 +135,22 @@ def _patch_http_done_without_zip(monkeypatch):
     monkeypatch.setattr(HttpClient, "request", fake_request)
 
 
+def _write_translation_config(path: Path, *, enabled: bool) -> Path:
+    config = {
+        "api_token": "test-token",
+        "model_version": "pipeline",
+        "translation_enabled": enabled,
+        "translation_api_base_url": "https://llm.example/v1",
+        "translation_api_key": "trans-key",
+        "translation_model": "gpt-4.1-mini",
+        "translation_target_language": "zh-CN",
+        "translation_timeout_sec": 5,
+        "translation_retry_max": 2,
+    }
+    path.write_text(json.dumps(config), encoding="utf-8")
+    return path
+
+
 def test_e2e_pipeline_success(tmp_path: Path, monkeypatch) -> None:
     input_dir = tmp_path / "in"
     output_dir = tmp_path / "out"
@@ -228,3 +245,128 @@ def test_done_without_zip_url_is_failed(tmp_path: Path, monkeypatch) -> None:
     manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["failed"] == 1
     assert manifest["items"][0]["error_code"] == "poll_missing_zip_url"
+
+
+def test_pipeline_translation_enabled_writes_translated_document(tmp_path: Path, monkeypatch) -> None:
+    input_dir = tmp_path / "in"
+    output_dir = tmp_path / "out"
+    config_path = tmp_path / "mineru.config.json"
+    input_dir.mkdir(parents=True)
+    output_dir.mkdir(parents=True)
+    (input_dir / "doc-a.pdf").write_bytes(b"a")
+
+    _patch_http(monkeypatch)
+    calls: list[str] = []
+
+    def fake_translate(self, markdown: str, *, target_language: str) -> str:
+        calls.append(target_language)
+        assert "kept.png" in markdown
+        return markdown.replace("kept.png", "kept.png") + "\n\n翻译完成"
+
+    monkeypatch.setattr(OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate)
+    _write_translation_config(config_path, enabled=True)
+
+    exit_code = main(
+        [
+            "run",
+            "--input",
+            str(input_dir),
+            "--output",
+            str(output_dir),
+            "--model-version",
+            "pipeline",
+            "--continue-on-error",
+            "true",
+            "--config",
+            str(config_path),
+        ]
+    )
+
+    assert exit_code == 0
+    manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    item = manifest["items"][0]
+    assert item["translation_status"] == "succeeded"
+    assert item["translated_document_path"] is not None
+    translated_path = Path(item["translated_document_path"])
+    assert translated_path.exists()
+    assert "翻译完成" in translated_path.read_text(encoding="utf-8")
+    assert calls == ["zh-CN"]
+
+
+def test_pipeline_translation_failure_falls_back_to_original_document(tmp_path: Path, monkeypatch) -> None:
+    input_dir = tmp_path / "in"
+    output_dir = tmp_path / "out"
+    config_path = tmp_path / "mineru.config.json"
+    input_dir.mkdir(parents=True)
+    output_dir.mkdir(parents=True)
+    (input_dir / "doc-a.pdf").write_bytes(b"a")
+
+    _patch_http(monkeypatch)
+
+    def fake_translate_fail(self, markdown: str, *, target_language: str) -> str:
+        raise ValueError("provider rejected")
+
+    monkeypatch.setattr(OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate_fail)
+    _write_translation_config(config_path, enabled=True)
+
+    exit_code = main(
+        [
+            "run",
+            "--input",
+            str(input_dir),
+            "--output",
+            str(output_dir),
+            "--model-version",
+            "pipeline",
+            "--continue-on-error",
+            "true",
+            "--config",
+            str(config_path),
+        ]
+    )
+
+    assert exit_code == 0
+    manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    item = manifest["items"][0]
+    assert item["status"] == "succeeded"
+    assert item["document_path"] is not None
+    assert item["translated_document_path"] is None
+    assert item["translation_status"] == "failed"
+    assert "provider rejected" in (item["translation_error"] or "")
+    assert any("translation_failed" in warning for warning in item["warnings"])
+
+
+def test_continue_on_error_false_stops_after_first_failure(tmp_path: Path, monkeypatch) -> None:
+    input_dir = tmp_path / "in"
+    output_dir = tmp_path / "out"
+    input_dir.mkdir(parents=True)
+    output_dir.mkdir(parents=True)
+
+    (input_dir / "a-fail.pdf").write_bytes(b"a")
+    (input_dir / "b-ok.pdf").write_bytes(b"b")
+
+    monkeypatch.setenv("MINERU_API_TOKEN", "test-token")
+    _patch_http(monkeypatch, fail_upload_for_name="a-fail.pdf")
+
+    exit_code = main(
+        [
+            "run",
+            "--input",
+            str(input_dir),
+            "--output",
+            str(output_dir),
+            "--model-version",
+            "pipeline",
+            "--continue-on-error",
+            "false",
+        ]
+    )
+
+    assert exit_code == 1
+    manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["failed"] == 2
+    assert manifest["succeeded"] == 0
+    first = manifest["items"][0]
+    second = manifest["items"][1]
+    assert first["error_code"] == "upload_failed"
+    assert second["error_code"] == "skipped_after_failure"

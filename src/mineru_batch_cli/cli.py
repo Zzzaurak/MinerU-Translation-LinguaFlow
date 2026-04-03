@@ -13,12 +13,16 @@ from mineru_batch_cli.config import ConfigError, load_run_config
 from mineru_batch_cli.http_client import HttpClient
 from mineru_batch_cli.discovery import DiscoveryError, discover_inputs
 from mineru_batch_cli.mineru_client import MineruClient, MineruClientError, UploadItem
-from mineru_batch_cli.polling import PolledItem, PollingError, poll_batch_until_terminal
-from mineru_batch_cli.artifacts import ArtifactFetchResult, fetch_and_extract_artifacts
+from mineru_batch_cli.polling import PollingError, poll_batch_until_terminal
+from mineru_batch_cli.artifacts import fetch_and_extract_artifacts
 from mineru_batch_cli.normalize_markdown import normalize_primary_markdown
 from mineru_batch_cli.image_filter import filter_referenced_images
 from mineru_batch_cli.output_writer import build_item_slug, write_item_output
 from mineru_batch_cli.manifest import ManifestItem, build_manifest, write_manifest
+from mineru_batch_cli.translation_client import (
+    OpenAICompatibleTranslationAdapter,
+    TranslationProvider,
+)
 from mineru_batch_cli.verify import VerifyError, verify_manifest
 
 
@@ -47,6 +51,30 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument(
         "--config",
         help="Path to a JSON config file",
+    )
+    run_parser.add_argument(
+        "--translation-enabled",
+        choices=("true", "false"),
+        default=None,
+        help="Enable markdown translation step",
+    )
+    run_parser.add_argument("--translation-api-base-url", default=None, help="Translation API base URL")
+    run_parser.add_argument("--translation-api-key", default=None, help="Translation API key")
+    run_parser.add_argument("--translation-model", default=None, help="Translation model name")
+    run_parser.add_argument(
+        "--translation-target-language",
+        default=None,
+        help="Translation target language, e.g. zh-CN",
+    )
+    run_parser.add_argument(
+        "--translation-timeout-sec",
+        default=None,
+        help="Translation HTTP timeout in seconds",
+    )
+    run_parser.add_argument(
+        "--translation-retry-max",
+        default=None,
+        help="Translation HTTP max retry count",
     )
     run_parser.set_defaults(handler=_handle_run)
 
@@ -109,17 +137,55 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
         api_token=config.api_token,
     )
 
+    translator: TranslationProvider | None = None
+    if config.translation_enabled:
+        translation_http_client = HttpClient(
+            timeout_sec=config.translation_timeout_sec,
+            retry_max=config.translation_retry_max,
+        )
+        translator = OpenAICompatibleTranslationAdapter(
+            http_client=translation_http_client,
+            api_base_url=config.translation_api_base_url,
+            api_key=config.translation_api_key,
+            model=config.translation_model,
+        )
+
     uploads = [UploadItem(path=item.path, data_id=item.input_id) for item in discovered]
     upload_result = mineru.upload_local_files_batch(uploads)
 
     discovered_by_id = {item.input_id: item for item in discovered}
+    index_by_id = {item.input_id: index for index, item in enumerate(discovered)}
     manifest_by_id: dict[str, ManifestItem] = {}
+    slug_by_id: dict[str, str] = {}
+    slug_set: set[str] = set()
+
+    def mark_skipped_after(failed_data_id: str) -> None:
+        failed_index = index_by_id.get(failed_data_id)
+        if failed_index is None:
+            return
+        for entry in discovered[failed_index + 1 :]:
+            if entry.input_id in manifest_by_id:
+                continue
+            manifest_by_id[entry.input_id] = ManifestItem(
+                input_path=entry.relative_path,
+                item_slug=_get_or_create_slug(entry.input_id, entry.relative_path, slug_by_id, slug_set),
+                status="failed",
+                error_code="skipped_after_failure",
+                error_message="stopped after previous failure",
+                document_path=None,
+                translated_document_path=None,
+                translation_status=None,
+                translation_error=None,
+                images_count=0,
+                warnings=[],
+            )
+
     uploaded_ids: list[str] = []
     for result in upload_result.results:
         source = discovered_by_id.get(result.data_id)
         if source is None:
             continue
-        slug = source.relative_path.replace("/", "-").lower()
+        slug = _get_or_create_slug(result.data_id, source.relative_path, slug_by_id, slug_set)
         if result.status == "uploaded":
             uploaded_ids.append(result.data_id)
             continue
@@ -130,9 +196,15 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
             error_code="upload_failed",
             error_message=result.error,
             document_path=None,
+            translated_document_path=None,
+            translation_status=None,
+            translation_error=None,
             images_count=0,
             warnings=[],
         )
+        if not continue_on_error:
+            mark_skipped_after(result.data_id)
+            break
 
     if uploaded_ids:
         polled = poll_batch_until_terminal(
@@ -148,8 +220,12 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
 
         artifact_inputs: list[dict[str, str]] = []
         for data_id in uploaded_ids:
+            if data_id in manifest_by_id and manifest_by_id[data_id].status != "succeeded":
+                if not continue_on_error:
+                    break
+                continue
             source = discovered_by_id[data_id]
-            slug = source.relative_path.replace("/", "-").lower()
+            slug = _get_or_create_slug(data_id, source.relative_path, slug_by_id, slug_set)
             polled_item = polled_map.get(data_id)
             if polled_item is None:
                 manifest_by_id[data_id] = ManifestItem(
@@ -159,9 +235,15 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                     error_code="poll_missing",
                     error_message="missing poll result",
                     document_path=None,
+                    translated_document_path=None,
+                    translation_status=None,
+                    translation_error=None,
                     images_count=0,
                     warnings=[],
                 )
+                if not continue_on_error:
+                    mark_skipped_after(data_id)
+                    break
                 continue
             if polled_item.state != "done":
                 manifest_by_id[data_id] = ManifestItem(
@@ -171,9 +253,15 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                     error_code=f"poll_{polled_item.state}",
                     error_message=polled_item.err_msg,
                     document_path=None,
+                    translated_document_path=None,
+                    translation_status=None,
+                    translation_error=None,
                     images_count=0,
                     warnings=[],
                 )
+                if not continue_on_error:
+                    mark_skipped_after(data_id)
+                    break
                 continue
             if polled_item.full_zip_url is None:
                 manifest_by_id[data_id] = ManifestItem(
@@ -183,9 +271,15 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                     error_code="poll_missing_zip_url",
                     error_message="done state without full_zip_url",
                     document_path=None,
+                    translated_document_path=None,
+                    translation_status=None,
+                    translation_error=None,
                     images_count=0,
                     warnings=[],
                 )
+                if not continue_on_error:
+                    mark_skipped_after(data_id)
+                    break
                 continue
             artifact_inputs.append(
                 {
@@ -201,11 +295,9 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                 items=artifact_inputs,
                 output_root=Path(temp_dir),
             )
-            slug_set: set[str] = set()
             for artifact in artifact_results:
                 source = discovered_by_id[artifact.data_id]
-                slug = build_item_slug(source.relative_path, existing=slug_set)
-                slug_set.add(slug)
+                slug = _get_or_create_slug(artifact.data_id, source.relative_path, slug_by_id, slug_set)
 
                 if artifact.status != "artifact_ready" or artifact.extracted_dir is None:
                     manifest_by_id[artifact.data_id] = ManifestItem(
@@ -215,9 +307,15 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                         error_code=artifact.status,
                         error_message=artifact.error,
                         document_path=None,
+                        translated_document_path=None,
+                        translation_status=None,
+                        translation_error=None,
                         images_count=0,
                         warnings=[],
                     )
+                    if not continue_on_error:
+                        mark_skipped_after(artifact.data_id)
+                        break
                     continue
 
                 normalized = normalize_primary_markdown(
@@ -232,10 +330,32 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                         error_code="markdown_missing",
                         error_message="markdown not found",
                         document_path=None,
+                        translated_document_path=None,
+                        translation_status=None,
+                        translation_error=None,
                         images_count=0,
                         warnings=[],
                     )
+                    if not continue_on_error:
+                        mark_skipped_after(artifact.data_id)
+                        break
                     continue
+
+                translated_document_path: Path | None = None
+                translation_status: str | None = None
+                translation_error: str | None = None
+                translation_warnings: list[str] = []
+                if translator is not None:
+                    translation_status, translation_error, translated_document_path = _translate_document(
+                        translator,
+                        document_path=normalized.document_path,
+                        target_language=config.translation_target_language,
+                        output_dir=Path(temp_dir) / "translated" / artifact.data_id,
+                    )
+                    if translation_error is not None:
+                        safe_error = _sanitize_error_message(translation_error)
+                        translation_error = safe_error
+                        translation_warnings.append(f"translation_failed: {safe_error}")
 
                 filtered_dir = Path(temp_dir) / "filtered" / artifact.data_id
                 image_result = filter_referenced_images(
@@ -248,11 +368,14 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                     "data_id": artifact.data_id,
                     "input_path": source.relative_path,
                     "warnings": image_result.missing_images,
+                    "translation_status": translation_status,
+                    "translation_error": translation_error,
                 }
                 out = write_item_output(
                     output_root=output_root,
                     item_slug=slug,
                     document_source=normalized.document_path,
+                    translated_document_source=translated_document_path,
                     images_source_dir=filtered_dir,
                     item_metadata_json=json.dumps(metadata, ensure_ascii=False),
                 )
@@ -264,8 +387,15 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                     error_code=None,
                     error_message=None,
                     document_path=str(out.document_path),
+                    translated_document_path=(
+                        str(out.translated_document_path)
+                        if out.translated_document_path is not None
+                        else None
+                    ),
+                    translation_status=translation_status,
+                    translation_error=translation_error,
                     images_count=len(image_result.kept_images),
-                    warnings=image_result.missing_images,
+                    warnings=image_result.missing_images + translation_warnings,
                 )
 
     ordered_items: list[ManifestItem] = []
@@ -274,34 +404,81 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
         if item is None:
             item = ManifestItem(
                 input_path=entry.relative_path,
-                item_slug=entry.relative_path.replace("/", "-").lower(),
+                item_slug=_get_or_create_slug(entry.input_id, entry.relative_path, slug_by_id, slug_set),
                 status="failed",
                 error_code="unprocessed",
                 error_message="item not processed",
                 document_path=None,
+                translated_document_path=None,
+                translation_status=None,
+                translation_error=None,
                 images_count=0,
                 warnings=[],
             )
         ordered_items.append(item)
 
-    if not continue_on_error:
-        first_fail_index = next((i for i, item in enumerate(ordered_items) if item.status != "succeeded"), None)
-        if first_fail_index is not None:
-            for idx in range(first_fail_index + 1, len(ordered_items)):
-                current = ordered_items[idx]
-                if current.status == "succeeded":
-                    ordered_items[idx] = ManifestItem(
-                        input_path=current.input_path,
-                        item_slug=current.item_slug,
-                        status="failed",
-                        error_code="skipped_after_failure",
-                        error_message="stopped after previous failure",
-                        document_path=None,
-                        images_count=0,
-                        warnings=[],
-                    )
-
     return ordered_items
+
+
+def _translate_document(
+    translator: TranslationProvider,
+    *,
+    document_path: Path,
+    target_language: str,
+    output_dir: Path,
+) -> tuple[str | None, str | None, Path | None]:
+    try:
+        markdown = document_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return ("failed", f"read markdown failed: {exc}", None)
+
+    try:
+        translated = translator.translate_markdown(markdown, target_language=target_language)
+    except ValueError as exc:
+        return ("failed", _sanitize_error_message(str(exc)), None)
+
+    suffix = _language_suffix(target_language)
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        translated_path = output_dir / f"document.{suffix}.md"
+        translated_path.write_text(translated, encoding="utf-8")
+    except OSError as exc:
+        return ("failed", _sanitize_error_message(f"write translated markdown failed: {exc}"), None)
+
+    return ("succeeded", None, translated_path)
+
+
+def _language_suffix(target_language: str) -> str:
+    cleaned = target_language.strip().lower().replace("_", "-")
+    if not cleaned:
+        return "zh"
+    if cleaned.startswith("zh"):
+        return "zh"
+    normalized = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in cleaned)
+    compact = "-".join(part for part in normalized.split("-") if part)
+    return compact or "zh"
+
+
+def _sanitize_error_message(message: str, max_chars: int = 300) -> str:
+    collapsed = " ".join(message.splitlines()).strip()
+    if len(collapsed) <= max_chars:
+        return collapsed
+    return f"{collapsed[:max_chars]}..."
+
+
+def _get_or_create_slug(
+    data_id: str,
+    relative_path: str,
+    slug_by_id: dict[str, str],
+    slug_set: set[str],
+) -> str:
+    existing = slug_by_id.get(data_id)
+    if existing is not None:
+        return existing
+    slug = build_item_slug(relative_path, existing=slug_set)
+    slug_set.add(slug)
+    slug_by_id[data_id] = slug
+    return slug
 
 
 def _handle_verify(_args: argparse.Namespace) -> int:
