@@ -32,6 +32,13 @@ def _args(**overrides: object) -> argparse.Namespace:
         "poll_interval_sec": None,
         "max_poll_min": None,
         "retry_max": None,
+        "translation_enabled": None,
+        "translation_api_base_url": None,
+        "translation_api_key": None,
+        "translation_model": None,
+        "translation_target_language": None,
+        "translation_timeout_sec": None,
+        "translation_retry_max": None,
     }
     defaults.update(overrides)
     return argparse.Namespace(**defaults)
@@ -46,6 +53,13 @@ def test_load_run_config_uses_env_when_cli_absent() -> None:
             "MINERU_POLL_INTERVAL_SEC": "2.5",
             "MINERU_MAX_POLL_MIN": "15",
             "MINERU_RETRY_MAX": "7",
+            "MINERU_TRANSLATION_ENABLED": "true",
+            "MINERU_TRANSLATION_API_BASE_URL": "https://llm.example/v1",
+            "MINERU_TRANSLATION_API_KEY": "env-trans-key",
+            "MINERU_TRANSLATION_MODEL": "gpt-4.1-mini",
+            "MINERU_TRANSLATION_TARGET_LANGUAGE": "zh-CN",
+            "MINERU_TRANSLATION_TIMEOUT_SEC": "20",
+            "MINERU_TRANSLATION_RETRY_MAX": "4",
         },
     )
 
@@ -54,6 +68,13 @@ def test_load_run_config_uses_env_when_cli_absent() -> None:
     assert cfg.poll_interval_sec == 2.5
     assert cfg.max_poll_min == 15.0
     assert cfg.retry_max == 7
+    assert cfg.translation_enabled is True
+    assert cfg.translation_api_base_url == "https://llm.example/v1"
+    assert cfg.translation_api_key == "env-trans-key"
+    assert cfg.translation_model == "gpt-4.1-mini"
+    assert cfg.translation_target_language == "zh-CN"
+    assert cfg.translation_timeout_sec == 20.0
+    assert cfg.translation_retry_max == 4
 
 
 def test_load_run_config_cli_overrides_env() -> None:
@@ -94,6 +115,13 @@ def test_load_run_config_uses_defaults_when_env_missing() -> None:
     assert cfg.max_poll_min == 30.0
     assert cfg.retry_max == 3
     assert cfg.model_version == "MinerU-HTML"
+    assert cfg.translation_enabled is False
+    assert cfg.translation_api_base_url == "https://api.openai.com/v1"
+    assert cfg.translation_api_key == ""
+    assert cfg.translation_model == "gpt-4o-mini"
+    assert cfg.translation_target_language == "zh-CN"
+    assert cfg.translation_timeout_sec == 30.0
+    assert cfg.translation_retry_max == 3
 
 
 def test_load_run_config_raises_when_token_missing() -> None:
@@ -111,7 +139,14 @@ def test_load_run_config_reads_json_when_config_path_provided(tmp_path) -> None:
   "model_version": "vlm",
   "poll_interval_sec": 4,
   "max_poll_min": 12,
-  "retry_max": 6
+  "retry_max": 6,
+  "translation_enabled": true,
+  "translation_api_base_url": "https://llm-json.example/v1",
+  "translation_api_key": "json-key",
+  "translation_model": "gpt-4.1",
+  "translation_target_language": "zh-TW",
+  "translation_timeout_sec": 18,
+  "translation_retry_max": 5
 }
 """.strip(),
         encoding="utf-8",
@@ -129,6 +164,13 @@ def test_load_run_config_reads_json_when_config_path_provided(tmp_path) -> None:
     assert cfg.poll_interval_sec == 4.0
     assert cfg.max_poll_min == 12.0
     assert cfg.retry_max == 6
+    assert cfg.translation_enabled is True
+    assert cfg.translation_api_base_url == "https://llm-json.example/v1"
+    assert cfg.translation_api_key == "json-key"
+    assert cfg.translation_model == "gpt-4.1"
+    assert cfg.translation_target_language == "zh-TW"
+    assert cfg.translation_timeout_sec == 18.0
+    assert cfg.translation_retry_max == 5
 
 
 def test_load_run_config_uses_json_first_per_field_and_blank_fallback(tmp_path) -> None:
@@ -141,7 +183,11 @@ def test_load_run_config_uses_json_first_per_field_and_blank_fallback(tmp_path) 
   "model_version": "vlm",
   "poll_interval_sec": "   ",
   "max_poll_min": 9,
-  "retry_max": 2
+  "retry_max": 2,
+  "translation_enabled": " ",
+  "translation_model": "gpt-4.1",
+  "translation_timeout_sec": " ",
+  "translation_retry_max": 9
 }
 """.strip(),
         encoding="utf-8",
@@ -162,6 +208,9 @@ def test_load_run_config_uses_json_first_per_field_and_blank_fallback(tmp_path) 
             "MINERU_POLL_INTERVAL_SEC": "3",
             "MINERU_MAX_POLL_MIN": "11",
             "MINERU_RETRY_MAX": "5",
+            "MINERU_TRANSLATION_ENABLED": "true",
+            "MINERU_TRANSLATION_API_KEY": "env-trans-key",
+            "MINERU_TRANSLATION_TIMEOUT_SEC": "25",
         },
         config_path=config_file,
     )
@@ -172,6 +221,11 @@ def test_load_run_config_uses_json_first_per_field_and_blank_fallback(tmp_path) 
     assert cfg.retry_max == 2
     assert cfg.api_base_url == "https://cli.example"
     assert cfg.poll_interval_sec == 8.0
+    assert cfg.translation_enabled is True
+    assert cfg.translation_model == "gpt-4.1"
+    assert cfg.translation_api_key == "env-trans-key"
+    assert cfg.translation_timeout_sec == 25.0
+    assert cfg.translation_retry_max == 9
 
 
 def test_load_run_config_invalid_numeric_falls_through_blank_json_cli_then_fails_env(
@@ -195,6 +249,68 @@ def test_load_run_config_invalid_numeric_falls_through_blank_json_cli_then_fails
             env={"MINERU_POLL_INTERVAL_SEC": "abc"},
             config_path=config_file,
         )
+
+
+def test_load_run_config_translation_requires_key_when_enabled() -> None:
+    with pytest.raises(ConfigError, match="Missing required translation API key"):
+        load_run_config(
+            _args(api_token="cli-token", translation_enabled=True),
+            env={},
+        )
+
+
+def test_load_run_config_translation_boolean_validation() -> None:
+    with pytest.raises(ConfigError, match="translation-enabled must be a boolean"):
+        load_run_config(
+            _args(api_token="cli-token"),
+            env={"MINERU_TRANSLATION_ENABLED": "maybe"},
+        )
+
+
+def test_load_run_config_translation_numeric_validation() -> None:
+    with pytest.raises(ConfigError, match="translation-timeout-sec must be a positive number"):
+        load_run_config(
+            _args(api_token="cli-token"),
+            env={"MINERU_TRANSLATION_TIMEOUT_SEC": "0"},
+        )
+
+    with pytest.raises(ConfigError, match="translation-retry-max must be a positive integer"):
+        load_run_config(
+            _args(api_token="cli-token"),
+            env={"MINERU_TRANSLATION_RETRY_MAX": "0"},
+        )
+
+
+def test_load_run_config_translation_cli_overrides_env() -> None:
+    cfg = load_run_config(
+        _args(
+            api_token="cli-token",
+            translation_enabled="false",
+            translation_api_base_url="https://cli-llm.example/v1",
+            translation_api_key="cli-trans-key",
+            translation_model="gpt-cli",
+            translation_target_language="zh-CN",
+            translation_timeout_sec="12",
+            translation_retry_max="2",
+        ),
+        env={
+            "MINERU_TRANSLATION_ENABLED": "true",
+            "MINERU_TRANSLATION_API_BASE_URL": "https://env-llm.example/v1",
+            "MINERU_TRANSLATION_API_KEY": "env-trans-key",
+            "MINERU_TRANSLATION_MODEL": "gpt-env",
+            "MINERU_TRANSLATION_TARGET_LANGUAGE": "zh-TW",
+            "MINERU_TRANSLATION_TIMEOUT_SEC": "25",
+            "MINERU_TRANSLATION_RETRY_MAX": "5",
+        },
+    )
+
+    assert cfg.translation_enabled is False
+    assert cfg.translation_api_base_url == "https://cli-llm.example/v1"
+    assert cfg.translation_api_key == "cli-trans-key"
+    assert cfg.translation_model == "gpt-cli"
+    assert cfg.translation_target_language == "zh-CN"
+    assert cfg.translation_timeout_sec == 12.0
+    assert cfg.translation_retry_max == 2
 
 
 def test_load_run_config_raises_when_explicit_config_path_missing(tmp_path) -> None:

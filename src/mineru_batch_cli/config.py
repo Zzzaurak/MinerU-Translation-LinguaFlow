@@ -23,6 +23,13 @@ class RunConfig:
     poll_interval_sec: float
     max_poll_min: float
     retry_max: int
+    translation_enabled: bool
+    translation_api_base_url: str
+    translation_api_key: str
+    translation_model: str
+    translation_target_language: str
+    translation_timeout_sec: float
+    translation_retry_max: int
 
 
 def load_run_config(
@@ -82,6 +89,57 @@ def load_run_config(
         name="retry-max",
     )
 
+    translation_enabled = _coalesce_bool(
+        json_config.get("translation_enabled"),
+        getattr(args, "translation_enabled", None),
+        env_vars.get("MINERU_TRANSLATION_ENABLED"),
+        False,
+        name="translation-enabled",
+    )
+    translation_api_base_url = _coalesce_str(
+        json_config.get("translation_api_base_url"),
+        getattr(args, "translation_api_base_url", None),
+        env_vars.get("MINERU_TRANSLATION_API_BASE_URL"),
+        "https://api.openai.com/v1",
+    )
+    translation_api_key = _coalesce_str(
+        json_config.get("translation_api_key"),
+        getattr(args, "translation_api_key", None),
+        env_vars.get("MINERU_TRANSLATION_API_KEY"),
+        "",
+    )
+    translation_model = _coalesce_str(
+        json_config.get("translation_model"),
+        getattr(args, "translation_model", None),
+        env_vars.get("MINERU_TRANSLATION_MODEL"),
+        "gpt-4o-mini",
+    )
+    translation_target_language = _coalesce_str(
+        json_config.get("translation_target_language"),
+        getattr(args, "translation_target_language", None),
+        env_vars.get("MINERU_TRANSLATION_TARGET_LANGUAGE"),
+        "zh-CN",
+    )
+    translation_timeout_sec = _coalesce_positive_float(
+        json_config.get("translation_timeout_sec"),
+        getattr(args, "translation_timeout_sec", None),
+        env_vars.get("MINERU_TRANSLATION_TIMEOUT_SEC"),
+        30.0,
+        name="translation-timeout-sec",
+    )
+    translation_retry_max = _coalesce_positive_int(
+        json_config.get("translation_retry_max"),
+        getattr(args, "translation_retry_max", None),
+        env_vars.get("MINERU_TRANSLATION_RETRY_MAX"),
+        3,
+        name="translation-retry-max",
+    )
+
+    if translation_enabled and not translation_api_key:
+        raise ConfigError(
+            "Missing required translation API key: set MINERU_TRANSLATION_API_KEY"
+        )
+
     return RunConfig(
         api_token=api_token,
         api_base_url=api_base_url,
@@ -89,6 +147,13 @@ def load_run_config(
         poll_interval_sec=poll_interval_sec,
         max_poll_min=max_poll_min,
         retry_max=retry_max,
+        translation_enabled=translation_enabled,
+        translation_api_base_url=translation_api_base_url,
+        translation_api_key=translation_api_key,
+        translation_model=translation_model,
+        translation_target_language=translation_target_language,
+        translation_timeout_sec=translation_timeout_sec,
+        translation_retry_max=translation_retry_max,
     )
 
 
@@ -149,6 +214,27 @@ def _coalesce_positive_int(
     return value
 
 
+def _coalesce_bool(
+    json_value: object | None,
+    cli_value: object,
+    env_value: str | None,
+    default: bool,
+    *,
+    name: str,
+) -> bool:
+    raw = _pick_raw(json_value, cli_value, env_value)
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        return raw
+    value = str(raw).strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ConfigError(f"{name} must be a boolean")
+
+
 def _pick_raw(
     json_value: object | None,
     cli_value: object,
@@ -196,6 +282,13 @@ def _load_json_config(config_path: str | os.PathLike[str] | None) -> dict[str, o
         "poll_interval_sec": loaded_obj.get("poll_interval_sec"),
         "max_poll_min": loaded_obj.get("max_poll_min"),
         "retry_max": loaded_obj.get("retry_max"),
+        "translation_enabled": loaded_obj.get("translation_enabled"),
+        "translation_api_base_url": loaded_obj.get("translation_api_base_url"),
+        "translation_api_key": loaded_obj.get("translation_api_key"),
+        "translation_model": loaded_obj.get("translation_model"),
+        "translation_target_language": loaded_obj.get("translation_target_language"),
+        "translation_timeout_sec": loaded_obj.get("translation_timeout_sec"),
+        "translation_retry_max": loaded_obj.get("translation_retry_max"),
     }
 
 
