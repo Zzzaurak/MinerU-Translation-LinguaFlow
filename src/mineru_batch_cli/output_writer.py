@@ -12,6 +12,9 @@ class ItemOutput:
     item_dir: Path
     document_path: Path
     translated_document_path: Path | None
+    source_document_path: Path | None
+    source_move_status: str | None
+    source_move_error: str | None
     images_dir: Path
     item_json_path: Path
 
@@ -37,6 +40,7 @@ def write_item_output(
     item_slug: str,
     document_source: Path,
     translated_document_source: Path | None,
+    source_input_file: Path | None,
     images_source_dir: Path,
     item_metadata_json: str,
 ) -> ItemOutput:
@@ -67,11 +71,42 @@ def write_item_output(
     item_json_path = item_dir / "item.json"
     item_json_path.write_text(item_metadata_json, encoding="utf-8")
 
+    source_target: Path | None = None
+    source_move_status: str | None = None
+    source_move_error: str | None = None
+    if source_input_file is not None:
+        source_dir = item_dir / "source"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        source_target = source_dir / source_input_file.name
+        try:
+            shutil.move(str(source_input_file), str(source_target))
+            source_move_status = "moved"
+        except OSError as move_exc:
+            try:
+                shutil.copy2(source_input_file, source_target)
+            except OSError as copy_exc:
+                source_target = None
+                source_move_status = "failed"
+                source_move_error = f"move failed: {move_exc}; fallback copy failed: {copy_exc}"
+            else:
+                try:
+                    source_input_file.unlink()
+                except OSError as unlink_exc:
+                    source_move_status = "failed"
+                    source_move_error = (
+                        f"move failed: {move_exc}; fallback copied but delete failed: {unlink_exc}"
+                    )
+                else:
+                    source_move_status = "copied_then_deleted"
+
     return ItemOutput(
         item_slug=item_slug,
         item_dir=item_dir,
         document_path=document_target,
         translated_document_path=translated_target,
+        source_document_path=source_target,
+        source_move_status=source_move_status,
+        source_move_error=source_move_error,
         images_dir=images_target,
         item_json_path=item_json_path,
     )

@@ -19,6 +19,9 @@ class ManifestItem:
     translated_document_path: str | None
     translation_status: str | None
     translation_error: str | None
+    source_file_path: str | None
+    source_move_status: str | None
+    source_move_error: str | None
     images_count: int
     warnings: list[str]
 
@@ -55,6 +58,9 @@ def build_manifest(
                 "translated_document_path": item.translated_document_path,
                 "translation_status": item.translation_status,
                 "translation_error": item.translation_error,
+                "source_file_path": item.source_file_path,
+                "source_move_status": item.source_move_status,
+                "source_move_error": item.source_move_error,
                 "images_count": item.images_count,
                 "warnings": item.warnings,
             }

@@ -101,6 +101,25 @@ def verify_manifest(path: Path) -> None:
             raise VerifyError(
                 f"manifest items[{index}] translation_error must be string or null"
             )
+        source_file_path = item.get("source_file_path")
+        if source_file_path is not None and not isinstance(source_file_path, str):
+            raise VerifyError(
+                f"manifest items[{index}] source_file_path must be string or null"
+            )
+        source_move_status = item.get("source_move_status")
+        if source_move_status is not None and source_move_status not in {
+            "moved",
+            "copied_then_deleted",
+            "failed",
+        }:
+            raise VerifyError(
+                f"manifest items[{index}] source_move_status must be moved, copied_then_deleted, failed, or null"
+            )
+        source_move_error = item.get("source_move_error")
+        if source_move_error is not None and not isinstance(source_move_error, str):
+            raise VerifyError(
+                f"manifest items[{index}] source_move_error must be string or null"
+            )
         error_code = item.get("error_code")
         if error_code is not None and not isinstance(error_code, str):
             raise VerifyError(f"manifest items[{index}] error_code must be string or null")

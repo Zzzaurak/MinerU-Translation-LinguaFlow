@@ -8,10 +8,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Sequence
 from uuid import uuid4
+from hashlib import sha256
 
-from mineru_batch_cli.config import ConfigError, load_run_config
+from mineru_batch_cli.config import ConfigError, load_run_config, load_translate_config
 from mineru_batch_cli.http_client import HttpClient
-from mineru_batch_cli.discovery import DiscoveryError, discover_inputs
+from mineru_batch_cli.discovery import DiscoveryError, discover_inputs, DiscoveredInput
 from mineru_batch_cli.mineru_client import MineruClient, MineruClientError, UploadItem
 from mineru_batch_cli.polling import PollingError, poll_batch_until_terminal
 from mineru_batch_cli.artifacts import fetch_and_extract_artifacts
@@ -78,6 +79,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.set_defaults(handler=_handle_run)
 
+    translate_parser = subparsers.add_parser("translate", help="Translate markdown files only")
+    translate_parser.add_argument("--input", required=True, help="Input directory")
+    translate_parser.add_argument("--output", required=True, help="Output directory")
+    translate_parser.add_argument(
+        "--continue-on-error",
+        choices=("true", "false"),
+        default="true",
+        help="Continue processing after a file error",
+    )
+    translate_parser.add_argument("--config", help="Path to a JSON config file")
+    translate_parser.add_argument("--translation-api-base-url", default=None, help="Translation API base URL")
+    translate_parser.add_argument("--translation-api-key", default=None, help="Translation API key")
+    translate_parser.add_argument("--translation-model", default=None, help="Translation model name")
+    translate_parser.add_argument(
+        "--translation-target-language",
+        default=None,
+        help="Translation target language, e.g. zh-CN",
+    )
+    translate_parser.add_argument(
+        "--translation-timeout-sec",
+        default=None,
+        help="Translation HTTP timeout in seconds",
+    )
+    translate_parser.add_argument(
+        "--translation-retry-max",
+        default=None,
+        help="Translation HTTP max retry count",
+    )
+    translate_parser.set_defaults(handler=_handle_translate)
+
     verify_parser = subparsers.add_parser("verify", help="Verify a manifest")
     verify_parser.add_argument("--manifest", required=True, help="Manifest file")
     verify_parser.set_defaults(handler=_handle_verify)
@@ -99,7 +130,7 @@ def _handle_run(_args: argparse.Namespace) -> int:
     continue_on_error = _args.continue_on_error == "true"
     try:
         items = _run_pipeline(config, discovered, Path(_args.output), continue_on_error)
-    except (MineruClientError, PollingError) as exc:
+    except (MineruClientError, PollingError, OSError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
@@ -123,6 +154,228 @@ def _handle_run(_args: argparse.Namespace) -> int:
     if succeeded > 0:
         return 2
     return 1
+
+
+def _handle_translate(_args: argparse.Namespace) -> int:
+    try:
+        config = load_translate_config(_args, config_path=_args.config)
+        discovered = discover_markdown_inputs(Path(_args.input))
+    except ConfigError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except DiscoveryError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    continue_on_error = _args.continue_on_error == "true"
+    items = _run_translate_pipeline(config, discovered, Path(_args.output), continue_on_error)
+
+    manifest = build_manifest(
+        run_id=f"run-{uuid4().hex[:12]}",
+        started_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        finished_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        input_root=str(Path(_args.input)),
+        output_root=str(Path(_args.output)),
+        items=items,
+    )
+    manifest_path = Path(_args.output) / "manifest.json"
+    write_manifest(manifest_path, manifest)
+
+    failed_obj = manifest.get("failed")
+    succeeded_obj = manifest.get("succeeded")
+    failed = failed_obj if isinstance(failed_obj, int) else 0
+    succeeded = succeeded_obj if isinstance(succeeded_obj, int) else 0
+    if failed == 0:
+        return 0
+    if succeeded > 0:
+        return 2
+    return 1
+
+
+def discover_markdown_inputs(input_dir: Path) -> list[DiscoveredInput]:
+    root = input_dir.resolve()
+    if not root.exists() or not root.is_dir():
+        raise DiscoveryError(f"Input directory does not exist: {input_dir}")
+
+    collected: list[DiscoveredInput] = []
+    for candidate in root.rglob("*"):
+        if candidate.is_dir() or candidate.is_symlink():
+            continue
+        if candidate.suffix.lower() != ".md":
+            continue
+        relative = candidate.relative_to(root).as_posix()
+        stats = candidate.stat()
+        material = f"{relative}|{stats.st_size}|{stats.st_mtime_ns}"
+        input_id = sha256(material.encode("utf-8")).hexdigest()[:16]
+        collected.append(
+            DiscoveredInput(path=candidate, relative_path=relative, input_id=input_id)
+        )
+
+    return sorted(
+        collected,
+        key=lambda item: (item.relative_path.casefold(), item.relative_path),
+    )
+
+
+def _run_translate_pipeline(config, discovered, output_root: Path, continue_on_error: bool) -> list[ManifestItem]:
+    output_root.mkdir(parents=True, exist_ok=True)
+    if not discovered:
+        return []
+
+    translation_http_client = HttpClient(
+        timeout_sec=config.translation_timeout_sec,
+        retry_max=config.translation_retry_max,
+    )
+    translator = OpenAICompatibleTranslationAdapter(
+        http_client=translation_http_client,
+        api_base_url=config.translation_api_base_url,
+        api_key=config.translation_api_key,
+        model=config.translation_model,
+    )
+
+    ordered_items: list[ManifestItem] = []
+    slug_set: set[str] = set()
+
+    for index, source in enumerate(discovered):
+        slug = build_item_slug(source.relative_path, existing=slug_set)
+        slug_set.add(slug)
+
+        translation_status: str | None = None
+        translation_error: str | None = None
+        warnings: list[str] = []
+        translated_document_path: Path | None = None
+
+        translation_status, translation_error, translated_document_path = _translate_document(
+            translator,
+            document_path=source.path,
+            target_language=config.translation_target_language,
+            output_dir=output_root / "_translate_tmp" / source.input_id,
+        )
+        if translation_error is not None:
+            translation_error = _sanitize_error_message(translation_error)
+            warnings.append(f"translation_failed: {translation_error}")
+
+        metadata = {
+            "data_id": source.input_id,
+            "input_path": source.relative_path,
+            "warnings": warnings,
+            "translation_status": translation_status,
+            "translation_error": translation_error,
+        }
+
+        try:
+            out = write_item_output(
+                output_root=output_root,
+                item_slug=slug,
+                document_source=source.path,
+                translated_document_source=translated_document_path,
+                source_input_file=source.path,
+                images_source_dir=output_root / "_translate_tmp" / "images-empty",
+                item_metadata_json=json.dumps(metadata, ensure_ascii=False),
+            )
+        except OSError as exc:
+            ordered_items.append(
+                ManifestItem(
+                    input_path=source.relative_path,
+                    item_slug=slug,
+                    status="failed",
+                    error_code="output_write_failed",
+                    error_message=_sanitize_error_message(str(exc)),
+                    document_path=None,
+                    translated_document_path=None,
+                    translation_status=translation_status,
+                    translation_error=translation_error,
+                    source_file_path=None,
+                    source_move_status=None,
+                    source_move_error=None,
+                    images_count=0,
+                    warnings=warnings,
+                )
+            )
+            if not continue_on_error:
+                for pending in discovered[index + 1 :]:
+                    pending_slug = build_item_slug(pending.relative_path, existing=slug_set)
+                    slug_set.add(pending_slug)
+                    ordered_items.append(
+                        ManifestItem(
+                            input_path=pending.relative_path,
+                            item_slug=pending_slug,
+                            status="failed",
+                            error_code="skipped_after_failure",
+                            error_message="stopped after previous failure",
+                            document_path=None,
+                            translated_document_path=None,
+                            translation_status=None,
+                            translation_error=None,
+                            source_file_path=None,
+                            source_move_status=None,
+                            source_move_error=None,
+                            images_count=0,
+                            warnings=[],
+                        )
+                    )
+                break
+            continue
+
+        status = "succeeded" if translation_status == "succeeded" else "failed"
+        error_code = None if status == "succeeded" else "translation_failed"
+        error_message = None if status == "succeeded" else translation_error
+
+        if out.source_move_status == "failed" and out.source_move_error is not None:
+            warnings.append(_sanitize_error_message(out.source_move_error))
+
+        ordered_items.append(
+            ManifestItem(
+                input_path=source.relative_path,
+                item_slug=slug,
+                status=status,
+                error_code=error_code,
+                error_message=error_message,
+                document_path=str(out.document_path),
+                translated_document_path=(
+                    str(out.translated_document_path)
+                    if out.translated_document_path is not None
+                    else None
+                ),
+                translation_status=translation_status,
+                translation_error=translation_error,
+                source_file_path=(
+                    str(out.source_document_path)
+                    if out.source_document_path is not None
+                    else None
+                ),
+                source_move_status=out.source_move_status,
+                source_move_error=out.source_move_error,
+                images_count=0,
+                warnings=warnings,
+            )
+        )
+
+        if status == "failed" and not continue_on_error:
+            for pending in discovered[index + 1 :]:
+                pending_slug = build_item_slug(pending.relative_path, existing=slug_set)
+                slug_set.add(pending_slug)
+                ordered_items.append(
+                    ManifestItem(
+                        input_path=pending.relative_path,
+                        item_slug=pending_slug,
+                        status="failed",
+                        error_code="skipped_after_failure",
+                        error_message="stopped after previous failure",
+                        document_path=None,
+                        translated_document_path=None,
+                        translation_status=None,
+                        translation_error=None,
+                        source_file_path=None,
+                        source_move_status=None,
+                        source_move_error=None,
+                        images_count=0,
+                        warnings=[],
+                    )
+                )
+            break
+
+    return ordered_items
 
 
 def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool) -> list[ManifestItem]:
@@ -176,6 +429,9 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                 translated_document_path=None,
                 translation_status=None,
                 translation_error=None,
+                source_file_path=None,
+                source_move_status=None,
+                source_move_error=None,
                 images_count=0,
                 warnings=[],
             )
@@ -199,6 +455,9 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
             translated_document_path=None,
             translation_status=None,
             translation_error=None,
+            source_file_path=None,
+            source_move_status=None,
+            source_move_error=None,
             images_count=0,
             warnings=[],
         )
@@ -238,6 +497,9 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                     translated_document_path=None,
                     translation_status=None,
                     translation_error=None,
+                    source_file_path=None,
+                    source_move_status=None,
+                    source_move_error=None,
                     images_count=0,
                     warnings=[],
                 )
@@ -256,6 +518,9 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                     translated_document_path=None,
                     translation_status=None,
                     translation_error=None,
+                    source_file_path=None,
+                    source_move_status=None,
+                    source_move_error=None,
                     images_count=0,
                     warnings=[],
                 )
@@ -274,6 +539,9 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                     translated_document_path=None,
                     translation_status=None,
                     translation_error=None,
+                    source_file_path=None,
+                    source_move_status=None,
+                    source_move_error=None,
                     images_count=0,
                     warnings=[],
                 )
@@ -310,6 +578,9 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                         translated_document_path=None,
                         translation_status=None,
                         translation_error=None,
+                        source_file_path=None,
+                        source_move_status=None,
+                        source_move_error=None,
                         images_count=0,
                         warnings=[],
                     )
@@ -333,6 +604,9 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                         translated_document_path=None,
                         translation_status=None,
                         translation_error=None,
+                        source_file_path=None,
+                        source_move_status=None,
+                        source_move_error=None,
                         images_count=0,
                         warnings=[],
                     )
@@ -344,7 +618,7 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                 translated_document_path: Path | None = None
                 translation_status: str | None = None
                 translation_error: str | None = None
-                translation_warnings: list[str] = []
+                warnings: list[str] = []
                 if translator is not None:
                     translation_status, translation_error, translated_document_path = _translate_document(
                         translator,
@@ -355,30 +629,64 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                     if translation_error is not None:
                         safe_error = _sanitize_error_message(translation_error)
                         translation_error = safe_error
-                        translation_warnings.append(f"translation_failed: {safe_error}")
+                        warnings.append(f"translation_failed: {safe_error}")
 
                 filtered_dir = Path(temp_dir) / "filtered" / artifact.data_id
-                image_result = filter_referenced_images(
-                    normalized.document_path,
-                    artifact.extracted_dir,
-                    filtered_dir,
-                )
+                try:
+                    image_result = filter_referenced_images(
+                        normalized.document_path,
+                        artifact.extracted_dir,
+                        filtered_dir,
+                    )
+                    missing_images = image_result.missing_images
+                    kept_images_count = len(image_result.kept_images)
+                except OSError as exc:
+                    filtered_dir.mkdir(parents=True, exist_ok=True)
+                    missing_images = []
+                    kept_images_count = 0
+                    warnings.append(_sanitize_error_message(f"image_filter_failed: {exc}"))
 
                 metadata = {
                     "data_id": artifact.data_id,
                     "input_path": source.relative_path,
-                    "warnings": image_result.missing_images,
+                    "warnings": missing_images + warnings,
                     "translation_status": translation_status,
                     "translation_error": translation_error,
                 }
-                out = write_item_output(
-                    output_root=output_root,
-                    item_slug=slug,
-                    document_source=normalized.document_path,
-                    translated_document_source=translated_document_path,
-                    images_source_dir=filtered_dir,
-                    item_metadata_json=json.dumps(metadata, ensure_ascii=False),
-                )
+                try:
+                    out = write_item_output(
+                        output_root=output_root,
+                        item_slug=slug,
+                        document_source=normalized.document_path,
+                        translated_document_source=translated_document_path,
+                        source_input_file=source.path,
+                        images_source_dir=filtered_dir,
+                        item_metadata_json=json.dumps(metadata, ensure_ascii=False),
+                    )
+                except OSError as exc:
+                    manifest_by_id[artifact.data_id] = ManifestItem(
+                        input_path=source.relative_path,
+                        item_slug=slug,
+                        status="failed",
+                        error_code="output_write_failed",
+                        error_message=_sanitize_error_message(str(exc)),
+                        document_path=None,
+                        translated_document_path=None,
+                        translation_status=translation_status,
+                        translation_error=translation_error,
+                        source_file_path=None,
+                        source_move_status=None,
+                        source_move_error=None,
+                        images_count=0,
+                        warnings=missing_images + warnings,
+                    )
+                    if not continue_on_error:
+                        mark_skipped_after(artifact.data_id)
+                        break
+                    continue
+
+                if out.source_move_status == "failed" and out.source_move_error is not None:
+                    warnings.append(_sanitize_error_message(out.source_move_error))
 
                 manifest_by_id[artifact.data_id] = ManifestItem(
                     input_path=source.relative_path,
@@ -394,8 +702,15 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                     ),
                     translation_status=translation_status,
                     translation_error=translation_error,
-                    images_count=len(image_result.kept_images),
-                    warnings=image_result.missing_images + translation_warnings,
+                    source_file_path=(
+                        str(out.source_document_path)
+                        if out.source_document_path is not None
+                        else None
+                    ),
+                    source_move_status=out.source_move_status,
+                    source_move_error=out.source_move_error,
+                    images_count=kept_images_count,
+                    warnings=missing_images + warnings,
                 )
 
     ordered_items: list[ManifestItem] = []
@@ -412,6 +727,9 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                 translated_document_path=None,
                 translation_status=None,
                 translation_error=None,
+                source_file_path=None,
+                source_move_status=None,
+                source_move_error=None,
                 images_count=0,
                 warnings=[],
             )
@@ -434,7 +752,7 @@ def _translate_document(
 
     try:
         translated = translator.translate_markdown(markdown, target_language=target_language)
-    except ValueError as exc:
+    except Exception as exc:
         return ("failed", _sanitize_error_message(str(exc)), None)
 
     suffix = _language_suffix(target_language)

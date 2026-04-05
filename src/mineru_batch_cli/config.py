@@ -32,6 +32,16 @@ class RunConfig:
     translation_retry_max: int
 
 
+@dataclass(frozen=True)
+class TranslateConfig:
+    translation_api_base_url: str
+    translation_api_key: str
+    translation_model: str
+    translation_target_language: str
+    translation_timeout_sec: float
+    translation_retry_max: int
+
+
 def load_run_config(
     args: argparse.Namespace,
     env: dict[str, str] | None = None,
@@ -148,6 +158,68 @@ def load_run_config(
         max_poll_min=max_poll_min,
         retry_max=retry_max,
         translation_enabled=translation_enabled,
+        translation_api_base_url=translation_api_base_url,
+        translation_api_key=translation_api_key,
+        translation_model=translation_model,
+        translation_target_language=translation_target_language,
+        translation_timeout_sec=translation_timeout_sec,
+        translation_retry_max=translation_retry_max,
+    )
+
+
+def load_translate_config(
+    args: argparse.Namespace,
+    env: dict[str, str] | None = None,
+    config_path: str | os.PathLike[str] | None = None,
+) -> TranslateConfig:
+    env_vars = os.environ if env is None else env
+    json_config = _load_json_config(config_path)
+
+    translation_api_base_url = _coalesce_str(
+        json_config.get("translation_api_base_url"),
+        getattr(args, "translation_api_base_url", None),
+        env_vars.get("MINERU_TRANSLATION_API_BASE_URL"),
+        "https://api.openai.com/v1",
+    )
+    translation_api_key = _coalesce_str(
+        json_config.get("translation_api_key"),
+        getattr(args, "translation_api_key", None),
+        env_vars.get("MINERU_TRANSLATION_API_KEY"),
+        "",
+    )
+    translation_model = _coalesce_str(
+        json_config.get("translation_model"),
+        getattr(args, "translation_model", None),
+        env_vars.get("MINERU_TRANSLATION_MODEL"),
+        "gpt-4o-mini",
+    )
+    translation_target_language = _coalesce_str(
+        json_config.get("translation_target_language"),
+        getattr(args, "translation_target_language", None),
+        env_vars.get("MINERU_TRANSLATION_TARGET_LANGUAGE"),
+        "zh-CN",
+    )
+    translation_timeout_sec = _coalesce_positive_float(
+        json_config.get("translation_timeout_sec"),
+        getattr(args, "translation_timeout_sec", None),
+        env_vars.get("MINERU_TRANSLATION_TIMEOUT_SEC"),
+        30.0,
+        name="translation-timeout-sec",
+    )
+    translation_retry_max = _coalesce_positive_int(
+        json_config.get("translation_retry_max"),
+        getattr(args, "translation_retry_max", None),
+        env_vars.get("MINERU_TRANSLATION_RETRY_MAX"),
+        3,
+        name="translation-retry-max",
+    )
+
+    if not translation_api_key:
+        raise ConfigError(
+            "Missing required translation API key: set MINERU_TRANSLATION_API_KEY"
+        )
+
+    return TranslateConfig(
         translation_api_base_url=translation_api_base_url,
         translation_api_key=translation_api_key,
         translation_model=translation_model,

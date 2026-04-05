@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -65,13 +66,31 @@ class HttpClient:
 
         attempt = 0
         while True:
-            response = self._request_func(
-                method.upper(),
-                url,
-                resolved_headers,
-                body,
-                self._timeout_sec,
-            )
+            try:
+                response = self._request_func(
+                    method.upper(),
+                    url,
+                    resolved_headers,
+                    body,
+                    self._timeout_sec,
+                )
+            except (TimeoutError, socket.timeout) as exc:
+                err = HttpClientError(
+                    "Network error: request timed out",
+                    status_code=None,
+                    retriable=True,
+                )
+            except HttpClientError as exc:
+                err = exc
+            else:
+                err = None
+
+            if err is not None:
+                if err.retriable and attempt < self._retry_max:
+                    self._sleep_func(_backoff_seconds(attempt))
+                    attempt += 1
+                    continue
+                raise err
 
             status_code = response.status_code
             if 400 <= status_code < 500 and status_code != 429:
@@ -141,6 +160,12 @@ def _default_request(
     except urllib.error.URLError as exc:
         raise HttpClientError(
             f"Network error: {exc.reason}",
+            status_code=None,
+            retriable=True,
+        ) from exc
+    except (TimeoutError, socket.timeout) as exc:
+        raise HttpClientError(
+            "Network error: request timed out",
             status_code=None,
             retriable=True,
         ) from exc
