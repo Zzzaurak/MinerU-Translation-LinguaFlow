@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 
 import pytest
 
@@ -88,3 +89,59 @@ def test_request_sets_json_content_type() -> None:
     data = captured["data"]
     assert isinstance(data, bytes)
     assert json.loads(data.decode("utf-8")) == {"k": "v"}
+
+
+def test_timeout_error_is_wrapped_as_retriable_http_client_error() -> None:
+    def fake_request(
+        _method: str,
+        _url: str,
+        _headers: dict[str, str],
+        _data: bytes | None,
+        _timeout: float,
+    ) -> HttpResponse:
+        raise TimeoutError("read timed out")
+
+    client = HttpClient(request_func=fake_request)
+    with pytest.raises(HttpClientError, match="request timed out") as exc_info:
+        client.request("GET", "https://example.test")
+    assert exc_info.value.retriable is True
+    assert exc_info.value.status_code is None
+
+
+def test_socket_timeout_is_wrapped_as_retriable_http_client_error() -> None:
+    def fake_request(
+        _method: str,
+        _url: str,
+        _headers: dict[str, str],
+        _data: bytes | None,
+        _timeout: float,
+    ) -> HttpResponse:
+        raise socket.timeout("timed out")
+
+    client = HttpClient(request_func=fake_request)
+    with pytest.raises(HttpClientError, match="request timed out") as exc_info:
+        client.request("GET", "https://example.test")
+    assert exc_info.value.retriable is True
+
+
+def test_retriable_http_client_error_is_retried_then_succeeds() -> None:
+    calls: list[int] = []
+    sleeps: list[float] = []
+
+    def fake_request(
+        _method: str,
+        _url: str,
+        _headers: dict[str, str],
+        _data: bytes | None,
+        _timeout: float,
+    ) -> HttpResponse:
+        calls.append(1)
+        if len(calls) == 1:
+            raise HttpClientError("Network error: temporary", retriable=True)
+        return HttpResponse(status_code=200, body=b"ok", headers={})
+
+    client = HttpClient(retry_max=2, request_func=fake_request, sleep_func=sleeps.append)
+    response = client.request("GET", "https://example.test")
+    assert response.status_code == 200
+    assert len(calls) == 2
+    assert sleeps == [1.0]

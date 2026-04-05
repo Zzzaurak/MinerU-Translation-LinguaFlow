@@ -22,6 +22,7 @@ def test_top_level_help_lists_run_and_verify() -> None:
     result = run_cli("--help")
     assert result.returncode == 0
     assert "run" in result.stdout
+    assert "translate" in result.stdout
     assert "verify" in result.stdout
 
 
@@ -46,3 +47,18 @@ def test_verify_help_includes_manifest_argument() -> None:
     result = run_cli("verify", "--help")
     assert result.returncode == 0
     assert "--manifest" in result.stdout
+
+
+def test_translate_help_includes_expected_arguments() -> None:
+    result = run_cli("translate", "--help")
+    assert result.returncode == 0
+    assert "--input" in result.stdout
+    assert "--output" in result.stdout
+    assert "--continue-on-error" in result.stdout
+    assert "--config" in result.stdout
+    assert "--translation-api-base-url" in result.stdout
+    assert "--translation-api-key" in result.stdout
+    assert "--translation-model" in result.stdout
+    assert "--translation-target-language" in result.stdout
+    assert "--translation-timeout-sec" in result.stdout
+    assert "--translation-retry-max" in result.stdout

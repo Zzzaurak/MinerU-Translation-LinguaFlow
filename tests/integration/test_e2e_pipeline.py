@@ -330,10 +330,16 @@ def test_pipeline_translation_failure_falls_back_to_original_document(tmp_path: 
     item = manifest["items"][0]
     assert item["status"] == "succeeded"
     assert item["document_path"] is not None
+    assert Path(item["document_path"]).exists()
     assert item["translated_document_path"] is None
     assert item["translation_status"] == "failed"
     assert "provider rejected" in (item["translation_error"] or "")
     assert any("translation_failed" in warning for warning in item["warnings"])
+    assert item["source_file_path"] is not None
+    assert item["source_move_status"] in {"moved", "copied_then_deleted"}
+    moved_source = Path(item["source_file_path"])
+    assert moved_source.exists()
+    assert not (input_dir / "doc-a.pdf").exists()
 
 
 def test_continue_on_error_false_stops_after_first_failure(tmp_path: Path, monkeypatch) -> None:
@@ -370,3 +376,166 @@ def test_continue_on_error_false_stops_after_first_failure(tmp_path: Path, monke
     second = manifest["items"][1]
     assert first["error_code"] == "upload_failed"
     assert second["error_code"] == "skipped_after_failure"
+
+
+def test_translation_timeout_does_not_break_original_markdown_output(tmp_path: Path, monkeypatch) -> None:
+    input_dir = tmp_path / "in"
+    output_dir = tmp_path / "out"
+    config_path = tmp_path / "mineru.config.json"
+    input_dir.mkdir(parents=True)
+    output_dir.mkdir(parents=True)
+    (input_dir / "doc-a.pdf").write_bytes(b"a")
+
+    _patch_http(monkeypatch)
+
+    def fake_translate_timeout(self, markdown: str, *, target_language: str) -> str:
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate_timeout)
+    _write_translation_config(config_path, enabled=True)
+
+    exit_code = main(
+        [
+            "run",
+            "--input",
+            str(input_dir),
+            "--output",
+            str(output_dir),
+            "--model-version",
+            "pipeline",
+            "--continue-on-error",
+            "true",
+            "--config",
+            str(config_path),
+        ]
+    )
+
+    assert exit_code == 0
+    manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    item = manifest["items"][0]
+    assert item["status"] == "succeeded"
+    assert item["document_path"] is not None
+    assert Path(item["document_path"]).exists()
+    assert item["translated_document_path"] is None
+    assert item["translation_status"] == "failed"
+    assert "timed out" in (item["translation_error"] or "")
+
+
+def test_item_json_warnings_match_manifest_warnings(tmp_path: Path, monkeypatch) -> None:
+    input_dir = tmp_path / "in"
+    output_dir = tmp_path / "out"
+    config_path = tmp_path / "mineru.config.json"
+    input_dir.mkdir(parents=True)
+    output_dir.mkdir(parents=True)
+    (input_dir / "doc-a.pdf").write_bytes(b"a")
+
+    _patch_http(monkeypatch)
+
+    def fake_translate_fail(self, markdown: str, *, target_language: str) -> str:
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate_fail)
+    _write_translation_config(config_path, enabled=True)
+
+    exit_code = main(
+        [
+            "run",
+            "--input",
+            str(input_dir),
+            "--output",
+            str(output_dir),
+            "--model-version",
+            "pipeline",
+            "--continue-on-error",
+            "true",
+            "--config",
+            str(config_path),
+        ]
+    )
+
+    assert exit_code == 0
+    manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    item = manifest["items"][0]
+    item_dir = Path(item["document_path"]).parent
+    item_json = json.loads((item_dir / "item.json").read_text(encoding="utf-8"))
+    assert item_json["warnings"] == item["warnings"]
+
+
+def test_translate_command_outputs_bilingual_markdown(tmp_path: Path, monkeypatch) -> None:
+    input_dir = tmp_path / "in"
+    output_dir = tmp_path / "out"
+    config_path = tmp_path / "mineru.config.json"
+    input_dir.mkdir(parents=True)
+    output_dir.mkdir(parents=True)
+    (input_dir / "doc-a.md").write_text("# Title\n\nHello", encoding="utf-8")
+
+    def fake_translate(self, markdown: str, *, target_language: str) -> str:
+        assert target_language == "zh-CN"
+        return markdown.replace("Hello", "你好")
+
+    monkeypatch.setattr(OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate)
+    _write_translation_config(config_path, enabled=True)
+
+    exit_code = main(
+        [
+            "translate",
+            "--input",
+            str(input_dir),
+            "--output",
+            str(output_dir),
+            "--config",
+            str(config_path),
+            "--continue-on-error",
+            "true",
+        ]
+    )
+
+    assert exit_code == 0
+    manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["succeeded"] == 1
+    item = manifest["items"][0]
+    assert item["document_path"] is not None
+    assert Path(item["document_path"]).exists()
+    assert item["translated_document_path"] is not None
+    assert Path(item["translated_document_path"]).exists()
+    assert item["source_file_path"] is not None
+    assert Path(item["source_file_path"]).exists()
+    assert not (input_dir / "doc-a.md").exists()
+
+
+def test_translate_command_translation_failure_keeps_original_markdown(tmp_path: Path, monkeypatch) -> None:
+    input_dir = tmp_path / "in"
+    output_dir = tmp_path / "out"
+    config_path = tmp_path / "mineru.config.json"
+    input_dir.mkdir(parents=True)
+    output_dir.mkdir(parents=True)
+    (input_dir / "doc-a.md").write_text("# Title\n\nHello", encoding="utf-8")
+
+    def fake_translate_fail(self, markdown: str, *, target_language: str) -> str:
+        raise TimeoutError("The read operation timed out")
+
+    monkeypatch.setattr(OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate_fail)
+    _write_translation_config(config_path, enabled=True)
+
+    exit_code = main(
+        [
+            "translate",
+            "--input",
+            str(input_dir),
+            "--output",
+            str(output_dir),
+            "--config",
+            str(config_path),
+            "--continue-on-error",
+            "true",
+        ]
+    )
+
+    assert exit_code == 1
+    manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["failed"] == 1
+    item = manifest["items"][0]
+    assert item["document_path"] is not None
+    assert Path(item["document_path"]).exists()
+    assert item["translated_document_path"] is None
+    assert item["translation_status"] == "failed"

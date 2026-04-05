@@ -9,7 +9,7 @@ import pytest
 
 from mineru_batch_cli.cli import main
 from mineru_batch_cli import config as config_module
-from mineru_batch_cli.config import ConfigError, load_run_config
+from mineru_batch_cli.config import ConfigError, load_run_config, load_translate_config
 
 
 @pytest.fixture(autouse=True)
@@ -376,3 +376,38 @@ def test_run_command_returns_non_zero_and_clear_error_when_token_missing(
     captured = capsys.readouterr()
     assert exit_code != 0
     assert "Missing required API token" in captured.err
+
+
+def test_load_translate_config_uses_env_when_cli_absent() -> None:
+    cfg = load_translate_config(
+        _args(),
+        env={
+            "MINERU_TRANSLATION_API_BASE_URL": "https://llm.example/v1",
+            "MINERU_TRANSLATION_API_KEY": "env-trans-key",
+            "MINERU_TRANSLATION_MODEL": "gpt-4.1-mini",
+            "MINERU_TRANSLATION_TARGET_LANGUAGE": "zh-CN",
+            "MINERU_TRANSLATION_TIMEOUT_SEC": "20",
+            "MINERU_TRANSLATION_RETRY_MAX": "4",
+        },
+    )
+
+    assert cfg.translation_api_base_url == "https://llm.example/v1"
+    assert cfg.translation_api_key == "env-trans-key"
+    assert cfg.translation_model == "gpt-4.1-mini"
+    assert cfg.translation_target_language == "zh-CN"
+    assert cfg.translation_timeout_sec == 20.0
+    assert cfg.translation_retry_max == 4
+
+
+def test_load_translate_config_uses_defaults_when_env_missing() -> None:
+    cfg = load_translate_config(_args(), env={"MINERU_TRANSLATION_API_KEY": "k"})
+    assert cfg.translation_api_base_url == "https://api.openai.com/v1"
+    assert cfg.translation_model == "gpt-4o-mini"
+    assert cfg.translation_target_language == "zh-CN"
+    assert cfg.translation_timeout_sec == 30.0
+    assert cfg.translation_retry_max == 3
+
+
+def test_load_translate_config_requires_key() -> None:
+    with pytest.raises(ConfigError, match="Missing required translation API key"):
+        load_translate_config(_args(), env={})
