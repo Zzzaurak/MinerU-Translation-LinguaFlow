@@ -179,6 +179,47 @@ PYTHONPATH=src ./.venv/bin/python -m mineru_batch_cli run \
 - `--translation-timeout-sec`：翻译请求超时秒数
 - `--translation-retry-max`：翻译请求重试次数
 
+### 仅翻译本地 Markdown（不走 MinerU）
+
+当你已经有 `.md` 文件，只想通过翻译 API 得到中文时：
+
+```bash
+bash scripts/translate-markdown.sh --input inbox --output out
+```
+
+或者 macOS `.command`：
+
+```bash
+bash scripts/translate-markdown.command --input inbox --output out
+```
+
+也可以直接调用 CLI：
+
+```bash
+PYTHONPATH=src ./.venv/bin/python -m mineru_batch_cli translate \
+  --input inbox \
+  --output out \
+  --config mineru.config.json \
+  --continue-on-error true
+```
+
+`translate` 参数说明：
+
+- `--input`：输入目录（仅扫描 `.md`）
+- `--output`：输出目录
+- `--continue-on-error`：
+  - `true`：某个文件翻译失败也继续处理其他文件
+  - `false`：遇错后停止后续处理
+- `--config`：配置文件路径（默认项目根 `mineru.config.json`）
+- `--translation-api-base-url` / `--translation-api-key` / `--translation-model`
+- `--translation-target-language` / `--translation-timeout-sec` / `--translation-retry-max`
+
+行为：
+
+- 始终输出原文 `document.md`
+- 翻译成功时输出 `document.zh.md`（或目标语言后缀）
+- 成功项会把源 markdown 移动到 `out/items/<item_slug>/source/`
+
 ---
 
 ## 5) 输出在哪里？长什么样？
