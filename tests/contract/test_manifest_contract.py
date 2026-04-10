@@ -36,7 +36,11 @@ def test_partial_success_exit_code_2(tmp_path: Path, monkeypatch) -> None:
         data=None,
         json_body=None,
     ) -> HttpResponse:
-        if method == "POST" and url.endswith("/file-urls/batch") and isinstance(json_body, dict):
+        if (
+            method == "POST"
+            and url.endswith("/file-urls/batch")
+            and isinstance(json_body, dict)
+        ):
             files = json_body.get("files", [])
             file_urls = []
             for row in files if isinstance(files, list) else []:
@@ -47,8 +51,12 @@ def test_partial_success_exit_code_2(tmp_path: Path, monkeypatch) -> None:
                 name_to_data_id = state.get("name_to_data_id")
                 if isinstance(name_to_data_id, dict):
                     name_to_data_id[name] = data_id
-                file_urls.append({"data_id": data_id, "file_url": f"https://upload/{name}"})
-            body = json.dumps({"data": {"batch_id": "batch-1", "file_urls": file_urls}}).encode("utf-8")
+                file_urls.append(
+                    {"data_id": data_id, "file_url": f"https://upload/{name}"}
+                )
+            body = json.dumps(
+                {"data": {"batch_id": "batch-1", "file_urls": file_urls}}
+            ).encode("utf-8")
             return HttpResponse(status_code=200, body=body, headers={})
 
         if method == "PUT" and url.startswith("https://upload/"):
@@ -121,8 +129,8 @@ def test_verify_prints_manifest_ok_for_valid_manifest(tmp_path: Path, capsys) ->
                 "run_id": "run-1",
                 "started_at": "2026-01-01T00:00:00Z",
                 "finished_at": "2026-01-01T00:00:01Z",
-                "input_root": "/tmp/in",
-                "output_root": "/tmp/out",
+                "input_root": str(tmp_path / "in"),
+                "output_root": str(tmp_path / "out"),
                 "total": 1,
                 "succeeded": 1,
                 "failed": 0,
@@ -133,8 +141,8 @@ def test_verify_prints_manifest_ok_for_valid_manifest(tmp_path: Path, capsys) ->
                         "status": "succeeded",
                         "error_code": None,
                         "error_message": None,
-                        "document_path": "items/a-pdf/document.md",
-                        "translated_document_path": "items/a-pdf/document.zh.md",
+                        "document_path": "items/a-pdf/a.md",
+                        "translated_document_path": "items/a-pdf/a_zh.md",
                         "translation_status": "succeeded",
                         "translation_error": None,
                         "source_file_path": "items/a-pdf/source/a.pdf",
@@ -164,8 +172,8 @@ def test_verify_rejects_invalid_item_schema(tmp_path: Path, capsys) -> None:
                 "run_id": "run-1",
                 "started_at": "2026-01-01T00:00:00Z",
                 "finished_at": "2026-01-01T00:00:01Z",
-                "input_root": "/tmp/in",
-                "output_root": "/tmp/out",
+                "input_root": str(tmp_path / "in"),
+                "output_root": str(tmp_path / "out"),
                 "total": 1,
                 "succeeded": 1,
                 "failed": 0,
@@ -190,8 +198,8 @@ def test_verify_rejects_wrong_item_field_types(tmp_path: Path, capsys) -> None:
                 "run_id": "run-1",
                 "started_at": "2026-01-01T00:00:00Z",
                 "finished_at": "2026-01-01T00:00:01Z",
-                "input_root": "/tmp/in",
-                "output_root": "/tmp/out",
+                "input_root": str(tmp_path / "in"),
+                "output_root": str(tmp_path / "out"),
                 "total": 1,
                 "succeeded": 1,
                 "failed": 0,
@@ -202,7 +210,7 @@ def test_verify_rejects_wrong_item_field_types(tmp_path: Path, capsys) -> None:
                         "status": "succeeded",
                         "error_code": None,
                         "error_message": None,
-                        "document_path": "items/a-pdf/document.md",
+                        "document_path": "items/a-pdf/a.md",
                         "translated_document_path": None,
                         "translation_status": None,
                         "translation_error": None,
@@ -224,7 +232,9 @@ def test_verify_rejects_wrong_item_field_types(tmp_path: Path, capsys) -> None:
     assert "images_count must be an integer" in captured.err
 
 
-def test_verify_accepts_legacy_manifest_without_translation_fields(tmp_path: Path, capsys) -> None:
+def test_verify_accepts_legacy_manifest_without_translation_fields(
+    tmp_path: Path, capsys
+) -> None:
     manifest = tmp_path / "manifest.json"
     manifest.write_text(
         json.dumps(
@@ -233,8 +243,8 @@ def test_verify_accepts_legacy_manifest_without_translation_fields(tmp_path: Pat
                 "run_id": "run-1",
                 "started_at": "2026-01-01T00:00:00Z",
                 "finished_at": "2026-01-01T00:00:01Z",
-                "input_root": "/tmp/in",
-                "output_root": "/tmp/out",
+                "input_root": str(tmp_path / "in"),
+                "output_root": str(tmp_path / "out"),
                 "total": 1,
                 "succeeded": 1,
                 "failed": 0,
@@ -245,7 +255,7 @@ def test_verify_accepts_legacy_manifest_without_translation_fields(tmp_path: Pat
                         "status": "succeeded",
                         "error_code": None,
                         "error_message": None,
-                        "document_path": "items/a-pdf/document.md",
+                        "document_path": "items/a-pdf/a.md",
                         "images_count": 0,
                         "warnings": [],
                     }
@@ -270,8 +280,8 @@ def test_verify_rejects_invalid_translation_field_types(tmp_path: Path, capsys) 
                 "run_id": "run-1",
                 "started_at": "2026-01-01T00:00:00Z",
                 "finished_at": "2026-01-01T00:00:01Z",
-                "input_root": "/tmp/in",
-                "output_root": "/tmp/out",
+                "input_root": str(tmp_path / "in"),
+                "output_root": str(tmp_path / "out"),
                 "total": 1,
                 "succeeded": 1,
                 "failed": 0,
@@ -282,7 +292,7 @@ def test_verify_rejects_invalid_translation_field_types(tmp_path: Path, capsys) 
                         "status": "succeeded",
                         "error_code": None,
                         "error_message": None,
-                        "document_path": "items/a-pdf/document.md",
+                        "document_path": "items/a-pdf/a.md",
                         "translated_document_path": 123,
                         "translation_status": "unknown",
                         "translation_error": ["bad"],
@@ -313,8 +323,8 @@ def test_verify_rejects_invalid_source_file_path_type(tmp_path: Path, capsys) ->
                 "run_id": "run-1",
                 "started_at": "2026-01-01T00:00:00Z",
                 "finished_at": "2026-01-01T00:00:01Z",
-                "input_root": "/tmp/in",
-                "output_root": "/tmp/out",
+                "input_root": str(tmp_path / "in"),
+                "output_root": str(tmp_path / "out"),
                 "total": 1,
                 "succeeded": 1,
                 "failed": 0,
@@ -325,7 +335,7 @@ def test_verify_rejects_invalid_source_file_path_type(tmp_path: Path, capsys) ->
                         "status": "succeeded",
                         "error_code": None,
                         "error_message": None,
-                        "document_path": "items/a-pdf/document.md",
+                        "document_path": "items/a-pdf/a.md",
                         "translated_document_path": None,
                         "translation_status": None,
                         "translation_error": None,
@@ -356,8 +366,8 @@ def test_verify_rejects_invalid_source_move_status(tmp_path: Path, capsys) -> No
                 "run_id": "run-1",
                 "started_at": "2026-01-01T00:00:00Z",
                 "finished_at": "2026-01-01T00:00:01Z",
-                "input_root": "/tmp/in",
-                "output_root": "/tmp/out",
+                "input_root": str(tmp_path / "in"),
+                "output_root": str(tmp_path / "out"),
                 "total": 1,
                 "succeeded": 1,
                 "failed": 0,
@@ -368,7 +378,7 @@ def test_verify_rejects_invalid_source_move_status(tmp_path: Path, capsys) -> No
                         "status": "succeeded",
                         "error_code": None,
                         "error_message": None,
-                        "document_path": "items/a-pdf/document.md",
+                        "document_path": "items/a-pdf/a.md",
                         "translated_document_path": None,
                         "translation_status": None,
                         "translation_error": None,
@@ -387,4 +397,7 @@ def test_verify_rejects_invalid_source_move_status(tmp_path: Path, capsys) -> No
     exit_code = main(["verify", "--manifest", str(manifest)])
     captured = capsys.readouterr()
     assert exit_code == 1
-    assert "source_move_status must be moved, copied_then_deleted, failed, or null" in captured.err
+    assert (
+        "source_move_status must be moved, copied_then_deleted, failed, or null"
+        in captured.err
+    )

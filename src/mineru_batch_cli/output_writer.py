@@ -19,6 +19,31 @@ class ItemOutput:
     item_json_path: Path
 
 
+def build_primary_markdown_name(source_filename: str) -> str:
+    stem = Path(source_filename).stem
+    if not stem:
+        stem = "document"
+    return f"{stem}.md"
+
+
+def build_translated_markdown_name(source_filename: str, target_language: str) -> str:
+    stem = Path(source_filename).stem
+    if not stem:
+        stem = "document"
+
+    language = target_language.strip().lower()
+    if not language:
+        language = "zh"
+    else:
+        for separator in ("-", "_", "."):
+            if separator in language:
+                language = language.split(separator, 1)[0]
+                break
+        language = "".join(ch for ch in language if ch.isalnum()) or "zh"
+
+    return f"{stem}_{language}.md"
+
+
 def build_item_slug(relative_path: str, *, existing: set[str] | None = None) -> str:
     normalized = relative_path.replace("\\", "/").strip("/")
     base = normalized.replace("/", "-").replace(" ", "-").lower()
@@ -40,6 +65,7 @@ def write_item_output(
     item_slug: str,
     document_source: Path,
     translated_document_source: Path | None,
+    translated_target_language: str | None = None,
     source_input_file: Path | None,
     images_source_dir: Path,
     item_metadata_json: str,
@@ -50,14 +76,24 @@ def write_item_output(
         shutil.rmtree(item_dir)
     item_dir.mkdir(parents=True, exist_ok=True)
 
-    document_target = item_dir / "document.md"
+    document_name = "document.md"
+    if source_input_file is not None:
+        document_name = build_primary_markdown_name(source_input_file.name)
+    document_target = item_dir / document_name
     shutil.copy2(document_source, document_target)
 
     translated_target: Path | None = None
     if translated_document_source is not None:
         translated_name = translated_document_source.name
-        if not translated_name:
-            translated_name = "document.zh.md"
+        if source_input_file is not None:
+            translated_name = build_translated_markdown_name(
+                source_input_file.name,
+                translated_target_language or "zh-CN",
+            )
+        elif not translated_name:
+            translated_name = build_translated_markdown_name(
+                "document.md", translated_target_language or "zh-CN"
+            )
         translated_target = item_dir / translated_name
         shutil.copy2(translated_document_source, translated_target)
 
@@ -87,15 +123,15 @@ def write_item_output(
             except OSError as copy_exc:
                 source_target = None
                 source_move_status = "failed"
-                source_move_error = f"move failed: {move_exc}; fallback copy failed: {copy_exc}"
+                source_move_error = (
+                    f"move failed: {move_exc}; fallback copy failed: {copy_exc}"
+                )
             else:
                 try:
                     source_input_file.unlink()
                 except OSError as unlink_exc:
                     source_move_status = "failed"
-                    source_move_error = (
-                        f"move failed: {move_exc}; fallback copied but delete failed: {unlink_exc}"
-                    )
+                    source_move_error = f"move failed: {move_exc}; fallback copied but delete failed: {unlink_exc}"
                 else:
                     source_move_status = "copied_then_deleted"
 

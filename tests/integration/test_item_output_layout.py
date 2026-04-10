@@ -25,6 +25,7 @@ def test_item_layout_contract(tmp_path: Path) -> None:
 
     assert output.item_dir == tmp_path / "out" / "items" / "doc-1"
     assert output.document_path.exists()
+    assert output.document_path == output.item_dir / "document.md"
     assert output.item_json_path.exists()
     assert (output.images_dir / "a.png").exists()
     names = sorted(path.name for path in output.item_dir.iterdir())
@@ -35,7 +36,9 @@ def test_item_layout_contract(tmp_path: Path) -> None:
     assert output.source_move_error is None
 
 
-def test_item_layout_contract_writes_translated_markdown_when_provided(tmp_path: Path) -> None:
+def test_item_layout_contract_writes_translated_markdown_when_provided(
+    tmp_path: Path,
+) -> None:
     document_source = tmp_path / "source.md"
     translated_source = tmp_path / "source.zh.md"
     document_source.write_text("# hello", encoding="utf-8")
@@ -84,7 +87,8 @@ def test_item_layout_contract_moves_source_file_when_provided(tmp_path: Path) ->
     assert output.source_move_error is None
     assert not input_file.exists()
     names = sorted(path.name for path in output.item_dir.iterdir())
-    assert names == ["document.md", "images", "item.json", "source"]
+    assert names == ["doc-a.md", "images", "item.json", "source"]
+    assert output.document_path == output.item_dir / "doc-a.md"
 
 
 def test_slug_collision_resolved() -> None:

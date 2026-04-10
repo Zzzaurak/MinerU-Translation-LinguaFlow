@@ -30,7 +30,11 @@ def _patch_http(monkeypatch, fail_upload_for_name: str | None = None):
         data=None,
         json_body=None,
     ) -> HttpResponse:
-        if method == "POST" and url.endswith("/file-urls/batch") and isinstance(json_body, dict):
+        if (
+            method == "POST"
+            and url.endswith("/file-urls/batch")
+            and isinstance(json_body, dict)
+        ):
             files = json_body.get("files", [])
             file_urls = []
             for row in files if isinstance(files, list) else []:
@@ -41,8 +45,12 @@ def _patch_http(monkeypatch, fail_upload_for_name: str | None = None):
                 mapping = state.get("name_to_data_id")
                 if isinstance(mapping, dict):
                     mapping[name] = data_id
-                file_urls.append({"data_id": data_id, "file_url": f"https://upload/{name}"})
-            body = json.dumps({"data": {"batch_id": "batch-e2e", "file_urls": file_urls}}).encode("utf-8")
+                file_urls.append(
+                    {"data_id": data_id, "file_url": f"https://upload/{name}"}
+                )
+            body = json.dumps(
+                {"data": {"batch_id": "batch-e2e", "file_urls": file_urls}}
+            ).encode("utf-8")
             return HttpResponse(status_code=200, body=body, headers={})
 
         if method == "PUT" and url.startswith("https://upload/"):
@@ -79,7 +87,11 @@ def _patch_http(monkeypatch, fail_upload_for_name: str | None = None):
             )
 
         if method == "GET" and url.startswith("https://zip/"):
-            return HttpResponse(status_code=200, body=_zip_bytes("![img](images/kept.png)\n"), headers={})
+            return HttpResponse(
+                status_code=200,
+                body=_zip_bytes("![img](images/kept.png)\n"),
+                headers={},
+            )
 
         return HttpResponse(status_code=404, body=b"", headers={})
 
@@ -98,7 +110,11 @@ def _patch_http_done_without_zip(monkeypatch):
         data=None,
         json_body=None,
     ) -> HttpResponse:
-        if method == "POST" and url.endswith("/file-urls/batch") and isinstance(json_body, dict):
+        if (
+            method == "POST"
+            and url.endswith("/file-urls/batch")
+            and isinstance(json_body, dict)
+        ):
             files = json_body.get("files", [])
             file_urls = []
             for row in files if isinstance(files, list) else []:
@@ -109,10 +125,14 @@ def _patch_http_done_without_zip(monkeypatch):
                 mapping = state.get("name_to_data_id")
                 if isinstance(mapping, dict):
                     mapping[name] = data_id
-                file_urls.append({"data_id": data_id, "file_url": f"https://upload/{name}"})
+                file_urls.append(
+                    {"data_id": data_id, "file_url": f"https://upload/{name}"}
+                )
             return HttpResponse(
                 status_code=200,
-                body=json.dumps({"data": {"batch_id": "batch-zless", "file_urls": file_urls}}).encode("utf-8"),
+                body=json.dumps(
+                    {"data": {"batch_id": "batch-zless", "file_urls": file_urls}}
+                ).encode("utf-8"),
                 headers={},
             )
         if method == "PUT" and url.startswith("https://upload/"):
@@ -183,6 +203,8 @@ def test_e2e_pipeline_success(tmp_path: Path, monkeypatch) -> None:
     assert manifest["succeeded"] == 2
     assert manifest["failed"] == 0
     assert len(manifest["items"]) == 2
+    item_names = sorted(Path(item["document_path"]).name for item in manifest["items"])
+    assert item_names == ["doc-a.md", "doc-b.md"]
 
 
 def test_one_failure_batch_continues(tmp_path: Path, monkeypatch) -> None:
@@ -247,7 +269,9 @@ def test_done_without_zip_url_is_failed(tmp_path: Path, monkeypatch) -> None:
     assert manifest["items"][0]["error_code"] == "poll_missing_zip_url"
 
 
-def test_pipeline_translation_enabled_writes_translated_document(tmp_path: Path, monkeypatch) -> None:
+def test_pipeline_translation_enabled_writes_translated_document(
+    tmp_path: Path, monkeypatch
+) -> None:
     input_dir = tmp_path / "in"
     output_dir = tmp_path / "out"
     config_path = tmp_path / "mineru.config.json"
@@ -263,7 +287,9 @@ def test_pipeline_translation_enabled_writes_translated_document(tmp_path: Path,
         assert "kept.png" in markdown
         return markdown.replace("kept.png", "kept.png") + "\n\n翻译完成"
 
-    monkeypatch.setattr(OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate)
+    monkeypatch.setattr(
+        OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate
+    )
     _write_translation_config(config_path, enabled=True)
 
     exit_code = main(
@@ -285,15 +311,22 @@ def test_pipeline_translation_enabled_writes_translated_document(tmp_path: Path,
     assert exit_code == 0
     manifest = json.loads((output_dir / "manifest.json").read_text(encoding="utf-8"))
     item = manifest["items"][0]
+    assert item["document_path"] is not None
+    document_path = Path(item["document_path"])
+    assert document_path.exists()
+    assert document_path.name == "doc-a.md"
     assert item["translation_status"] == "succeeded"
     assert item["translated_document_path"] is not None
     translated_path = Path(item["translated_document_path"])
     assert translated_path.exists()
+    assert translated_path.name == "doc-a_zh.md"
     assert "翻译完成" in translated_path.read_text(encoding="utf-8")
     assert calls == ["zh-CN"]
 
 
-def test_pipeline_translation_failure_falls_back_to_original_document(tmp_path: Path, monkeypatch) -> None:
+def test_pipeline_translation_failure_falls_back_to_original_document(
+    tmp_path: Path, monkeypatch
+) -> None:
     input_dir = tmp_path / "in"
     output_dir = tmp_path / "out"
     config_path = tmp_path / "mineru.config.json"
@@ -306,7 +339,9 @@ def test_pipeline_translation_failure_falls_back_to_original_document(tmp_path: 
     def fake_translate_fail(self, markdown: str, *, target_language: str) -> str:
         raise ValueError("provider rejected")
 
-    monkeypatch.setattr(OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate_fail)
+    monkeypatch.setattr(
+        OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate_fail
+    )
     _write_translation_config(config_path, enabled=True)
 
     exit_code = main(
@@ -330,7 +365,9 @@ def test_pipeline_translation_failure_falls_back_to_original_document(tmp_path: 
     item = manifest["items"][0]
     assert item["status"] == "succeeded"
     assert item["document_path"] is not None
-    assert Path(item["document_path"]).exists()
+    document_path = Path(item["document_path"])
+    assert document_path.exists()
+    assert document_path.name == "doc-a.md"
     assert item["translated_document_path"] is None
     assert item["translation_status"] == "failed"
     assert "provider rejected" in (item["translation_error"] or "")
@@ -342,7 +379,9 @@ def test_pipeline_translation_failure_falls_back_to_original_document(tmp_path: 
     assert not (input_dir / "doc-a.pdf").exists()
 
 
-def test_continue_on_error_false_stops_after_first_failure(tmp_path: Path, monkeypatch) -> None:
+def test_continue_on_error_false_stops_after_first_failure(
+    tmp_path: Path, monkeypatch
+) -> None:
     input_dir = tmp_path / "in"
     output_dir = tmp_path / "out"
     input_dir.mkdir(parents=True)
@@ -378,7 +417,9 @@ def test_continue_on_error_false_stops_after_first_failure(tmp_path: Path, monke
     assert second["error_code"] == "skipped_after_failure"
 
 
-def test_translation_timeout_does_not_break_original_markdown_output(tmp_path: Path, monkeypatch) -> None:
+def test_translation_timeout_does_not_break_original_markdown_output(
+    tmp_path: Path, monkeypatch
+) -> None:
     input_dir = tmp_path / "in"
     output_dir = tmp_path / "out"
     config_path = tmp_path / "mineru.config.json"
@@ -391,7 +432,9 @@ def test_translation_timeout_does_not_break_original_markdown_output(tmp_path: P
     def fake_translate_timeout(self, markdown: str, *, target_language: str) -> str:
         raise TimeoutError("The read operation timed out")
 
-    monkeypatch.setattr(OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate_timeout)
+    monkeypatch.setattr(
+        OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate_timeout
+    )
     _write_translation_config(config_path, enabled=True)
 
     exit_code = main(
@@ -415,13 +458,17 @@ def test_translation_timeout_does_not_break_original_markdown_output(tmp_path: P
     item = manifest["items"][0]
     assert item["status"] == "succeeded"
     assert item["document_path"] is not None
-    assert Path(item["document_path"]).exists()
+    document_path = Path(item["document_path"])
+    assert document_path.exists()
+    assert document_path.name == "doc-a.md"
     assert item["translated_document_path"] is None
     assert item["translation_status"] == "failed"
     assert "timed out" in (item["translation_error"] or "")
 
 
-def test_item_json_warnings_match_manifest_warnings(tmp_path: Path, monkeypatch) -> None:
+def test_item_json_warnings_match_manifest_warnings(
+    tmp_path: Path, monkeypatch
+) -> None:
     input_dir = tmp_path / "in"
     output_dir = tmp_path / "out"
     config_path = tmp_path / "mineru.config.json"
@@ -434,7 +481,9 @@ def test_item_json_warnings_match_manifest_warnings(tmp_path: Path, monkeypatch)
     def fake_translate_fail(self, markdown: str, *, target_language: str) -> str:
         raise TimeoutError("The read operation timed out")
 
-    monkeypatch.setattr(OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate_fail)
+    monkeypatch.setattr(
+        OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate_fail
+    )
     _write_translation_config(config_path, enabled=True)
 
     exit_code = main(
@@ -461,7 +510,9 @@ def test_item_json_warnings_match_manifest_warnings(tmp_path: Path, monkeypatch)
     assert item_json["warnings"] == item["warnings"]
 
 
-def test_translate_command_outputs_bilingual_markdown(tmp_path: Path, monkeypatch) -> None:
+def test_translate_command_outputs_bilingual_markdown(
+    tmp_path: Path, monkeypatch
+) -> None:
     input_dir = tmp_path / "in"
     output_dir = tmp_path / "out"
     config_path = tmp_path / "mineru.config.json"
@@ -473,7 +524,9 @@ def test_translate_command_outputs_bilingual_markdown(tmp_path: Path, monkeypatc
         assert target_language == "zh-CN"
         return markdown.replace("Hello", "你好")
 
-    monkeypatch.setattr(OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate)
+    monkeypatch.setattr(
+        OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate
+    )
     _write_translation_config(config_path, enabled=True)
 
     exit_code = main(
@@ -495,15 +548,21 @@ def test_translate_command_outputs_bilingual_markdown(tmp_path: Path, monkeypatc
     assert manifest["succeeded"] == 1
     item = manifest["items"][0]
     assert item["document_path"] is not None
-    assert Path(item["document_path"]).exists()
+    document_path = Path(item["document_path"])
+    assert document_path.exists()
+    assert document_path.name == "doc-a.md"
     assert item["translated_document_path"] is not None
-    assert Path(item["translated_document_path"]).exists()
+    translated_path = Path(item["translated_document_path"])
+    assert translated_path.exists()
+    assert translated_path.name == "doc-a_zh.md"
     assert item["source_file_path"] is not None
     assert Path(item["source_file_path"]).exists()
     assert not (input_dir / "doc-a.md").exists()
 
 
-def test_translate_command_translation_failure_keeps_original_markdown(tmp_path: Path, monkeypatch) -> None:
+def test_translate_command_translation_failure_keeps_original_markdown(
+    tmp_path: Path, monkeypatch
+) -> None:
     input_dir = tmp_path / "in"
     output_dir = tmp_path / "out"
     config_path = tmp_path / "mineru.config.json"
@@ -514,7 +573,9 @@ def test_translate_command_translation_failure_keeps_original_markdown(tmp_path:
     def fake_translate_fail(self, markdown: str, *, target_language: str) -> str:
         raise TimeoutError("The read operation timed out")
 
-    monkeypatch.setattr(OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate_fail)
+    monkeypatch.setattr(
+        OpenAICompatibleTranslationAdapter, "translate_markdown", fake_translate_fail
+    )
     _write_translation_config(config_path, enabled=True)
 
     exit_code = main(

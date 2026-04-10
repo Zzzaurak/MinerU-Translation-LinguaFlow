@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import re
 
 import pytest
 
@@ -13,7 +14,9 @@ from mineru_batch_cli.config import ConfigError, load_run_config, load_translate
 
 
 @pytest.fixture(autouse=True)
-def _isolate_default_project_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def _isolate_default_project_config(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     missing_default = tmp_path / "mineru.config.json"
 
     def _resolve(config_path):
@@ -243,7 +246,9 @@ def test_load_run_config_invalid_numeric_falls_through_blank_json_cli_then_fails
         encoding="utf-8",
     )
 
-    with pytest.raises(ConfigError, match="poll-interval-sec must be a positive number"):
+    with pytest.raises(
+        ConfigError, match="poll-interval-sec must be a positive number"
+    ):
         load_run_config(
             _args(poll_interval_sec="   "),
             env={"MINERU_POLL_INTERVAL_SEC": "abc"},
@@ -268,13 +273,17 @@ def test_load_run_config_translation_boolean_validation() -> None:
 
 
 def test_load_run_config_translation_numeric_validation() -> None:
-    with pytest.raises(ConfigError, match="translation-timeout-sec must be a positive number"):
+    with pytest.raises(
+        ConfigError, match="translation-timeout-sec must be a positive number"
+    ):
         load_run_config(
             _args(api_token="cli-token"),
             env={"MINERU_TRANSLATION_TIMEOUT_SEC": "0"},
         )
 
-    with pytest.raises(ConfigError, match="translation-retry-max must be a positive integer"):
+    with pytest.raises(
+        ConfigError, match="translation-retry-max must be a positive integer"
+    ):
         load_run_config(
             _args(api_token="cli-token"),
             env={"MINERU_TRANSLATION_RETRY_MAX": "0"},
@@ -316,7 +325,7 @@ def test_load_run_config_translation_cli_overrides_env() -> None:
 def test_load_run_config_raises_when_explicit_config_path_missing(tmp_path) -> None:
     missing_path = tmp_path / "missing.json"
 
-    with pytest.raises(ConfigError, match=str(missing_path)):
+    with pytest.raises(ConfigError, match=re.escape(str(missing_path))):
         load_run_config(_args(api_token="cli-token"), env={}, config_path=missing_path)
 
 
@@ -344,7 +353,9 @@ def test_load_run_config_raises_on_non_object_json_config(tmp_path) -> None:
         )
 
 
-def test_load_run_config_skips_missing_default_project_config(monkeypatch, tmp_path) -> None:
+def test_load_run_config_skips_missing_default_project_config(
+    monkeypatch, tmp_path
+) -> None:
     missing_path = tmp_path / "mineru.config.json"
     monkeypatch.setattr(config_module, "_resolve_config_path", lambda _: missing_path)
 
@@ -363,15 +374,17 @@ def test_run_command_returns_non_zero_and_clear_error_when_token_missing(
     input_dir = tmp_path / "in"
     input_dir.mkdir()
 
-    exit_code = main([
-        "run",
-        "--input",
-        str(input_dir),
-        "--output",
-        str(tmp_path / "out"),
-        "--model-version",
-        "pipeline",
-    ])
+    exit_code = main(
+        [
+            "run",
+            "--input",
+            str(input_dir),
+            "--output",
+            str(tmp_path / "out"),
+            "--model-version",
+            "pipeline",
+        ]
+    )
 
     captured = capsys.readouterr()
     assert exit_code != 0

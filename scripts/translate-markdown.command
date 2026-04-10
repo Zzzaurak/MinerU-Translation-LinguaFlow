@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
+set -u
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SH_SCRIPT="$SCRIPT_DIR/translate-markdown.sh"
 
-if [[ ! -x "$SH_SCRIPT" ]]; then
-  echo "Error: launcher script is not executable: $SH_SCRIPT" >&2
+if [[ ! -f "$SH_SCRIPT" ]]; then
+  echo "Error: launcher script is missing: $SH_SCRIPT" >&2
+  echo "Run the canonical entrypoint instead: python -m mineru_batch_cli translate ..." >&2
   echo "Press Enter to close..."
   read -r _
   exit 1
 fi
 
-if "$SH_SCRIPT" "$@"; then
+sh "$SH_SCRIPT" "$@"
+status=$?
+if [[ $status -eq 0 ]]; then
   exit 0
 fi
 
 echo
-echo "Launcher failed. Press Enter to close..."
+echo "Launcher failed (exit code $status)."
+echo "Run the canonical entrypoint instead: python -m mineru_batch_cli translate ..."
+echo "Press Enter to close..."
 read -r _
-exit 1
+exit "$status"

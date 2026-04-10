@@ -6,15 +6,31 @@
 
 ## 1) 启动前准备
 
+### 权威入口与脚本边界（统一入口契约）
+
+- 权威入口始终是：`python -m mineru_batch_cli`
+- `run / translate / verify` 的参数与行为以 `src/mineru_batch_cli/cli.py` 为准
+- `scripts/*` 仅做参数解析、路径处理与调用转发，不承载业务逻辑
+
 ### 环境要求
 
 - Python 3.12+
-- 已创建项目虚拟环境（本仓库使用 `./.venv`）
+- 创建项目虚拟环境（本仓库使用 `./.venv`）
 
 ### 安装依赖（若还没装）
 
+> 与 CI 保持一致：`python -m pip install --upgrade pip pytest`
+
+PowerShell（Windows）：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install --upgrade pip pytest
+```
+
+POSIX（macOS/Linux）：
+
 ```bash
-./.venv/bin/python -m pip install -U pip pytest
+./.venv/bin/python -m pip install --upgrade pip pytest
 ```
 
 ---
@@ -52,7 +68,9 @@
 
 ### 可选：开启英文→中文翻译后处理
 
-当 `translation_enabled=true` 时，CLI 会把标准化后的 `document.md` 发送到 OpenAI-compatible 翻译 API，返回中文 Markdown 并输出 `document.zh.md`。
+当 `translation_enabled=true` 时，CLI 会把标准化后的原文 Markdown 发送到 OpenAI-compatible 翻译 API，返回中文 Markdown 并按源文件名输出 `<原文件名>_zh.md`。
+
+迁移提示：旧的固定命名 `document.md`、`document.zh.md` 已移除，后续请按源文件名读取输出。
 
 推荐最小配置：
 
@@ -67,10 +85,18 @@
 ```
 
 翻译失败策略：
-- 不影响原 `document.md` 与 `images/` 产出。
+- 不影响原 `<原文件名>.md` 与 `images/` 产出。
 - 在 `item.json` 与 `manifest.json` 记录翻译状态/错误。
 
 也可以继续使用环境变量（兼容旧方式）：
+
+PowerShell（Windows）：
+
+```powershell
+$env:MINERU_API_TOKEN="你的_MinerU_API_Key"
+```
+
+POSIX（macOS/Linux）：
 
 ```bash
 export MINERU_API_TOKEN="你的_MinerU_API_Key"
@@ -115,6 +141,14 @@ mkdir -p inbox
 
 如果你不想每次手敲长命令，可以直接使用项目脚本：
 
+PowerShell（Windows）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run-mineru.ps1
+```
+
+POSIX（macOS/Linux）：
+
 ```bash
 bash scripts/run-mineru.sh
 ```
@@ -127,6 +161,14 @@ bash scripts/run-mineru.sh
 - `--continue-on-error true`
 
 你也可以显式覆盖：
+
+PowerShell（Windows）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run-mineru.ps1 --input inbox --output out --model-version pipeline --config mineru.config.json
+```
+
+POSIX（macOS/Linux）：
 
 ```bash
 bash scripts/run-mineru.sh \
@@ -144,9 +186,25 @@ bash scripts/run-mineru.command --input inbox --output out
 
 如果你需要把额外参数直接透传给底层 CLI，请使用 `--` 分隔：
 
+PowerShell（Windows）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/run-mineru.ps1 --input inbox --output out -- --continue-on-error false
+```
+
+POSIX（macOS/Linux）：
+
 ```bash
 bash scripts/run-mineru.sh --input inbox --output out -- --continue-on-error false
 ```
+
+直接调用权威入口（Windows PowerShell）：
+
+```powershell
+$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mineru_batch_cli run --input inbox --output out --config mineru.config.json --model-version pipeline --continue-on-error true
+```
+
+直接调用权威入口（POSIX）：
 
 ```bash
 PYTHONPATH=src ./.venv/bin/python -m mineru_batch_cli run \
@@ -183,6 +241,14 @@ PYTHONPATH=src ./.venv/bin/python -m mineru_batch_cli run \
 
 当你已经有 `.md` 文件，只想通过翻译 API 得到中文时：
 
+PowerShell（Windows）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/translate-markdown.ps1 --input inbox --output out
+```
+
+POSIX（macOS/Linux）：
+
 ```bash
 bash scripts/translate-markdown.sh --input inbox --output out
 ```
@@ -194,6 +260,14 @@ bash scripts/translate-markdown.command --input inbox --output out
 ```
 
 也可以直接调用 CLI：
+
+Windows PowerShell：
+
+```powershell
+$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mineru_batch_cli translate --input inbox --output out --config mineru.config.json --continue-on-error true
+```
+
+POSIX：
 
 ```bash
 PYTHONPATH=src ./.venv/bin/python -m mineru_batch_cli translate \
@@ -216,8 +290,8 @@ PYTHONPATH=src ./.venv/bin/python -m mineru_batch_cli translate \
 
 行为：
 
-- 始终输出原文 `document.md`
-- 翻译成功时输出 `document.zh.md`（或目标语言后缀）
+- 始终输出原文 `<原文件名>.md`
+- 翻译成功时输出 `<原文件名>_zh.md`（或目标语言后缀）
 - 成功项会把源 markdown 移动到 `out/items/<item_slug>/source/`
 
 ---
@@ -228,14 +302,22 @@ PYTHONPATH=src ./.venv/bin/python -m mineru_batch_cli translate \
 
 - `manifest.json`：整批结果汇总（总数、成功数、失败数、每个文件状态等）
 - `items/<item_slug>/`：每个输入文件对应一个目录
-  - `document.md`
-  - `document.zh.md`（仅 `translation_enabled=true` 且翻译成功时存在）
+  - `<原文件名>.md`
+  - `<原文件名>_zh.md`（仅 `translation_enabled=true` 且翻译成功时存在）
   - `images/`（仅保留 markdown 引用到的图片）
   - `item.json`
 
 ---
 
 ## 6) 校验输出 manifest
+
+PowerShell（Windows）：
+
+```powershell
+$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mineru_batch_cli verify --manifest out/manifest.json
+```
+
+POSIX（macOS/Linux）：
 
 ```bash
 PYTHONPATH=src ./.venv/bin/python -m mineru_batch_cli verify \
@@ -294,7 +376,12 @@ Error: Config file must be a JSON object: /your/path/mineru.config.json
 
 ### Q2: `python` 命令找不到
 
-你的系统可能只有 `python3`，本项目建议统一使用：
+你的系统可能只有 `python3`，本项目建议统一使用虚拟环境解释器：
+
+- Windows：`.\.venv\Scripts\python.exe`
+- POSIX：`./.venv/bin/python`
+
+示例（POSIX）：
 
 ```bash
 ./.venv/bin/python
@@ -304,9 +391,18 @@ Error: Config file must be a JSON object: /your/path/mineru.config.json
 
 说明虚拟环境未准备好。先执行：
 
+PowerShell（Windows）：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip pytest
+```
+
+POSIX（macOS/Linux）：
+
 ```bash
 python3 -m venv .venv
-./.venv/bin/python -m pip install -U pip pytest
+./.venv/bin/python -m pip install --upgrade pip pytest
 ```
 
 然后再运行：
@@ -332,24 +428,28 @@ bash scripts/run-mineru.sh --input inbox --output out
 
 ## 8) 最短可用示例（复制即用）
 
+Windows PowerShell 最短链路：
+
+```powershell
+$env:MINERU_API_TOKEN="你的_MinerU_API_Key"
+New-Item -ItemType Directory -Force -Path inbox,out | Out-Null
+# 把文件放入 inbox/
+
+$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mineru_batch_cli run --input inbox --output out --model-version pipeline --continue-on-error true
+$env:PYTHONPATH='src'; .\.venv\Scripts\python.exe -m mineru_batch_cli verify --manifest out/manifest.json
+```
+
+POSIX 最短链路：
+
 ```bash
 export MINERU_API_TOKEN="你的_MinerU_API_Key"
 
 mkdir -p inbox out
 # 把文件放入 inbox/
 
-# 方式 A：使用项目根 mineru.config.json（推荐）
 PYTHONPATH=src ./.venv/bin/python -m mineru_batch_cli run \
   --input inbox \
   --output out \
-  --model-version pipeline \
-  --continue-on-error true
-
-# 方式 B：显式指定配置文件路径
-PYTHONPATH=src ./.venv/bin/python -m mineru_batch_cli run \
-  --input inbox \
-  --output out \
-  --config mineru.config.json \
   --model-version pipeline \
   --continue-on-error true
 

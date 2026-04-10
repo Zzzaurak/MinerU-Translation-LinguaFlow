@@ -18,7 +18,11 @@ from mineru_batch_cli.polling import PollingError, poll_batch_until_terminal
 from mineru_batch_cli.artifacts import fetch_and_extract_artifacts
 from mineru_batch_cli.normalize_markdown import normalize_primary_markdown
 from mineru_batch_cli.image_filter import filter_referenced_images
-from mineru_batch_cli.output_writer import build_item_slug, write_item_output
+from mineru_batch_cli.output_writer import (
+    build_item_slug,
+    build_translated_markdown_name,
+    write_item_output,
+)
 from mineru_batch_cli.manifest import ManifestItem, build_manifest, write_manifest
 from mineru_batch_cli.translation_client import (
     OpenAICompatibleTranslationAdapter,
@@ -59,9 +63,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Enable markdown translation step",
     )
-    run_parser.add_argument("--translation-api-base-url", default=None, help="Translation API base URL")
-    run_parser.add_argument("--translation-api-key", default=None, help="Translation API key")
-    run_parser.add_argument("--translation-model", default=None, help="Translation model name")
+    run_parser.add_argument(
+        "--translation-api-base-url", default=None, help="Translation API base URL"
+    )
+    run_parser.add_argument(
+        "--translation-api-key", default=None, help="Translation API key"
+    )
+    run_parser.add_argument(
+        "--translation-model", default=None, help="Translation model name"
+    )
     run_parser.add_argument(
         "--translation-target-language",
         default=None,
@@ -79,7 +89,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run_parser.set_defaults(handler=_handle_run)
 
-    translate_parser = subparsers.add_parser("translate", help="Translate markdown files only")
+    translate_parser = subparsers.add_parser(
+        "translate", help="Translate markdown files only"
+    )
     translate_parser.add_argument("--input", required=True, help="Input directory")
     translate_parser.add_argument("--output", required=True, help="Output directory")
     translate_parser.add_argument(
@@ -89,9 +101,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Continue processing after a file error",
     )
     translate_parser.add_argument("--config", help="Path to a JSON config file")
-    translate_parser.add_argument("--translation-api-base-url", default=None, help="Translation API base URL")
-    translate_parser.add_argument("--translation-api-key", default=None, help="Translation API key")
-    translate_parser.add_argument("--translation-model", default=None, help="Translation model name")
+    translate_parser.add_argument(
+        "--translation-api-base-url", default=None, help="Translation API base URL"
+    )
+    translate_parser.add_argument(
+        "--translation-api-key", default=None, help="Translation API key"
+    )
+    translate_parser.add_argument(
+        "--translation-model", default=None, help="Translation model name"
+    )
     translate_parser.add_argument(
         "--translation-target-language",
         default=None,
@@ -168,7 +186,9 @@ def _handle_translate(_args: argparse.Namespace) -> int:
         return 1
 
     continue_on_error = _args.continue_on_error == "true"
-    items = _run_translate_pipeline(config, discovered, Path(_args.output), continue_on_error)
+    items = _run_translate_pipeline(
+        config, discovered, Path(_args.output), continue_on_error
+    )
 
     manifest = build_manifest(
         run_id=f"run-{uuid4().hex[:12]}",
@@ -217,7 +237,9 @@ def discover_markdown_inputs(input_dir: Path) -> list[DiscoveredInput]:
     )
 
 
-def _run_translate_pipeline(config, discovered, output_root: Path, continue_on_error: bool) -> list[ManifestItem]:
+def _run_translate_pipeline(
+    config, discovered, output_root: Path, continue_on_error: bool
+) -> list[ManifestItem]:
     output_root.mkdir(parents=True, exist_ok=True)
     if not discovered:
         return []
@@ -245,11 +267,13 @@ def _run_translate_pipeline(config, discovered, output_root: Path, continue_on_e
         warnings: list[str] = []
         translated_document_path: Path | None = None
 
-        translation_status, translation_error, translated_document_path = _translate_document(
-            translator,
-            document_path=source.path,
-            target_language=config.translation_target_language,
-            output_dir=output_root / "_translate_tmp" / source.input_id,
+        translation_status, translation_error, translated_document_path = (
+            _translate_document(
+                translator,
+                document_path=source.path,
+                target_language=config.translation_target_language,
+                output_dir=output_root / "_translate_tmp" / source.input_id,
+            )
         )
         if translation_error is not None:
             translation_error = _sanitize_error_message(translation_error)
@@ -269,6 +293,7 @@ def _run_translate_pipeline(config, discovered, output_root: Path, continue_on_e
                 item_slug=slug,
                 document_source=source.path,
                 translated_document_source=translated_document_path,
+                translated_target_language=config.translation_target_language,
                 source_input_file=source.path,
                 images_source_dir=output_root / "_translate_tmp" / "images-empty",
                 item_metadata_json=json.dumps(metadata, ensure_ascii=False),
@@ -294,7 +319,9 @@ def _run_translate_pipeline(config, discovered, output_root: Path, continue_on_e
             )
             if not continue_on_error:
                 for pending in discovered[index + 1 :]:
-                    pending_slug = build_item_slug(pending.relative_path, existing=slug_set)
+                    pending_slug = build_item_slug(
+                        pending.relative_path, existing=slug_set
+                    )
                     slug_set.add(pending_slug)
                     ordered_items.append(
                         ManifestItem(
@@ -378,7 +405,9 @@ def _run_translate_pipeline(config, discovered, output_root: Path, continue_on_e
     return ordered_items
 
 
-def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool) -> list[ManifestItem]:
+def _run_pipeline(
+    config, discovered, output_root: Path, continue_on_error: bool
+) -> list[ManifestItem]:
     output_root.mkdir(parents=True, exist_ok=True)
     if not discovered:
         return []
@@ -421,7 +450,9 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                 continue
             manifest_by_id[entry.input_id] = ManifestItem(
                 input_path=entry.relative_path,
-                item_slug=_get_or_create_slug(entry.input_id, entry.relative_path, slug_by_id, slug_set),
+                item_slug=_get_or_create_slug(
+                    entry.input_id, entry.relative_path, slug_by_id, slug_set
+                ),
                 status="failed",
                 error_code="skipped_after_failure",
                 error_message="stopped after previous failure",
@@ -441,7 +472,9 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
         source = discovered_by_id.get(result.data_id)
         if source is None:
             continue
-        slug = _get_or_create_slug(result.data_id, source.relative_path, slug_by_id, slug_set)
+        slug = _get_or_create_slug(
+            result.data_id, source.relative_path, slug_by_id, slug_set
+        )
         if result.status == "uploaded":
             uploaded_ids.append(result.data_id)
             continue
@@ -475,16 +508,23 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
             max_poll_min=config.max_poll_min,
         )
 
-        polled_map = {item.data_id: item for item in polled if item.data_id in uploaded_ids}
+        polled_map = {
+            item.data_id: item for item in polled if item.data_id in uploaded_ids
+        }
 
         artifact_inputs: list[dict[str, str]] = []
         for data_id in uploaded_ids:
-            if data_id in manifest_by_id and manifest_by_id[data_id].status != "succeeded":
+            if (
+                data_id in manifest_by_id
+                and manifest_by_id[data_id].status != "succeeded"
+            ):
                 if not continue_on_error:
                     break
                 continue
             source = discovered_by_id[data_id]
-            slug = _get_or_create_slug(data_id, source.relative_path, slug_by_id, slug_set)
+            slug = _get_or_create_slug(
+                data_id, source.relative_path, slug_by_id, slug_set
+            )
             polled_item = polled_map.get(data_id)
             if polled_item is None:
                 manifest_by_id[data_id] = ManifestItem(
@@ -565,9 +605,14 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
             )
             for artifact in artifact_results:
                 source = discovered_by_id[artifact.data_id]
-                slug = _get_or_create_slug(artifact.data_id, source.relative_path, slug_by_id, slug_set)
+                slug = _get_or_create_slug(
+                    artifact.data_id, source.relative_path, slug_by_id, slug_set
+                )
 
-                if artifact.status != "artifact_ready" or artifact.extracted_dir is None:
+                if (
+                    artifact.status != "artifact_ready"
+                    or artifact.extracted_dir is None
+                ):
                     manifest_by_id[artifact.data_id] = ManifestItem(
                         input_path=source.relative_path,
                         item_slug=slug,
@@ -593,7 +638,10 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                     artifact.extracted_dir,
                     Path(temp_dir) / "normalized" / artifact.data_id,
                 )
-                if normalized.status != "markdown_ready" or normalized.document_path is None:
+                if (
+                    normalized.status != "markdown_ready"
+                    or normalized.document_path is None
+                ):
                     manifest_by_id[artifact.data_id] = ManifestItem(
                         input_path=source.relative_path,
                         item_slug=slug,
@@ -620,11 +668,13 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                 translation_error: str | None = None
                 warnings: list[str] = []
                 if translator is not None:
-                    translation_status, translation_error, translated_document_path = _translate_document(
-                        translator,
-                        document_path=normalized.document_path,
-                        target_language=config.translation_target_language,
-                        output_dir=Path(temp_dir) / "translated" / artifact.data_id,
+                    translation_status, translation_error, translated_document_path = (
+                        _translate_document(
+                            translator,
+                            document_path=normalized.document_path,
+                            target_language=config.translation_target_language,
+                            output_dir=Path(temp_dir) / "translated" / artifact.data_id,
+                        )
                     )
                     if translation_error is not None:
                         safe_error = _sanitize_error_message(translation_error)
@@ -644,7 +694,9 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                     filtered_dir.mkdir(parents=True, exist_ok=True)
                     missing_images = []
                     kept_images_count = 0
-                    warnings.append(_sanitize_error_message(f"image_filter_failed: {exc}"))
+                    warnings.append(
+                        _sanitize_error_message(f"image_filter_failed: {exc}")
+                    )
 
                 metadata = {
                     "data_id": artifact.data_id,
@@ -659,6 +711,7 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                         item_slug=slug,
                         document_source=normalized.document_path,
                         translated_document_source=translated_document_path,
+                        translated_target_language=config.translation_target_language,
                         source_input_file=source.path,
                         images_source_dir=filtered_dir,
                         item_metadata_json=json.dumps(metadata, ensure_ascii=False),
@@ -685,7 +738,10 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
                         break
                     continue
 
-                if out.source_move_status == "failed" and out.source_move_error is not None:
+                if (
+                    out.source_move_status == "failed"
+                    and out.source_move_error is not None
+                ):
                     warnings.append(_sanitize_error_message(out.source_move_error))
 
                 manifest_by_id[artifact.data_id] = ManifestItem(
@@ -719,7 +775,9 @@ def _run_pipeline(config, discovered, output_root: Path, continue_on_error: bool
         if item is None:
             item = ManifestItem(
                 input_path=entry.relative_path,
-                item_slug=_get_or_create_slug(entry.input_id, entry.relative_path, slug_by_id, slug_set),
+                item_slug=_get_or_create_slug(
+                    entry.input_id, entry.relative_path, slug_by_id, slug_set
+                ),
                 status="failed",
                 error_code="unprocessed",
                 error_message="item not processed",
@@ -751,30 +809,27 @@ def _translate_document(
         return ("failed", f"read markdown failed: {exc}", None)
 
     try:
-        translated = translator.translate_markdown(markdown, target_language=target_language)
+        translated = translator.translate_markdown(
+            markdown, target_language=target_language
+        )
     except Exception as exc:
         return ("failed", _sanitize_error_message(str(exc)), None)
 
-    suffix = _language_suffix(target_language)
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
-        translated_path = output_dir / f"document.{suffix}.md"
+        translated_name = build_translated_markdown_name(
+            document_path.name, target_language
+        )
+        translated_path = output_dir / translated_name
         translated_path.write_text(translated, encoding="utf-8")
     except OSError as exc:
-        return ("failed", _sanitize_error_message(f"write translated markdown failed: {exc}"), None)
+        return (
+            "failed",
+            _sanitize_error_message(f"write translated markdown failed: {exc}"),
+            None,
+        )
 
     return ("succeeded", None, translated_path)
-
-
-def _language_suffix(target_language: str) -> str:
-    cleaned = target_language.strip().lower().replace("_", "-")
-    if not cleaned:
-        return "zh"
-    if cleaned.startswith("zh"):
-        return "zh"
-    normalized = "".join(ch if ch.isalnum() or ch == "-" else "-" for ch in cleaned)
-    compact = "-".join(part for part in normalized.split("-") if part)
-    return compact or "zh"
 
 
 def _sanitize_error_message(message: str, max_chars: int = 300) -> str:

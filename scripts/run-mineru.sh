@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 
+# Boundary contract:
+# - Authoritative entrypoint is Python module: python -m mineru_batch_cli
+# - This script only does arg parsing/path resolution/forwarding
+# - Do not implement MinerU business logic in shell
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -18,7 +23,7 @@ Options:
   -h, --help                 Show this help
 
 Notes:
-  - Uses project-local Python: ./.venv/bin/python
+  - Python resolution order: MINERU_PYTHON_BIN, ./.venv/bin/python, python3, python
   - Delegates to: python -m mineru_batch_cli run
   - Extra unknown args are forwarded to CLI run command
 EOF
@@ -38,6 +43,26 @@ resolve_dir_path() {
   else
     printf '%s\n' "$PWD/$raw"
   fi
+}
+
+resolve_existing_dir_path() {
+  local raw="$1"
+  if [[ "$raw" = /* ]]; then
+    if [[ -d "$raw" ]]; then
+      printf '%s\n' "$raw"
+      return 0
+    fi
+    echo "Error: Input directory does not exist: $raw" >&2
+    return 1
+  fi
+
+  if local resolved_dir; resolved_dir="$(cd "$raw" 2>/dev/null && pwd)"; then
+    printf '%s\n' "$resolved_dir"
+    return 0
+  fi
+
+  echo "Error: Input directory does not exist: $raw" >&2
+  return 1
 }
 
 resolve_file_path() {
@@ -94,19 +119,62 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-PYTHON_BIN="$PROJECT_ROOT/.venv/bin/python"
-if [[ ! -x "$PYTHON_BIN" ]]; then
-  echo "Error: Python not found in venv: $PYTHON_BIN" >&2
-  echo "Hint: create virtual environment and install deps first." >&2
-  exit 1
-fi
+candidate_is_usable() {
+  local candidate="$1"
+  [[ -x "$candidate" ]] || return 1
+  PYTHONPATH="$PROJECT_ROOT/src" "$candidate" -c 'import sys' >/dev/null 2>&1 || return 1
+  PYTHONPATH="$PROJECT_ROOT/src" "$candidate" -m mineru_batch_cli --help >/dev/null 2>&1 || return 1
+  return 0
+}
+
+resolve_python_bin() {
+  if [[ -n "${MINERU_PYTHON_BIN:-}" ]]; then
+    if candidate_is_usable "$MINERU_PYTHON_BIN"; then
+      printf '%s\n' "$MINERU_PYTHON_BIN"
+      return 0
+    fi
+    echo "Error: MINERU_PYTHON_BIN is set but not usable: $MINERU_PYTHON_BIN" >&2
+    echo "Hint: point MINERU_PYTHON_BIN to a working Python interpreter." >&2
+    return 1
+  fi
+
+  local venv_python="$PROJECT_ROOT/.venv/bin/python"
+  if candidate_is_usable "$venv_python"; then
+    printf '%s\n' "$venv_python"
+    return 0
+  fi
+
+  if command -v python3 >/dev/null 2>&1; then
+    local python3_bin
+    python3_bin="$(command -v python3)"
+    if candidate_is_usable "$python3_bin"; then
+      printf '%s\n' "$python3_bin"
+      return 0
+    fi
+  fi
+
+  if command -v python >/dev/null 2>&1; then
+    local python_bin
+    python_bin="$(command -v python)"
+    if candidate_is_usable "$python_bin"; then
+      printf '%s\n' "$python_bin"
+      return 0
+    fi
+  fi
+
+  echo "Error: no usable Python interpreter found." >&2
+  echo "Hint: set MINERU_PYTHON_BIN, create .venv (python -m venv .venv), and install project dependencies." >&2
+  return 1
+}
+
+PYTHON_BIN="$(resolve_python_bin)"
 
 if [[ ! -d "$PROJECT_ROOT/src" ]]; then
   echo "Error: src directory not found under project root: $PROJECT_ROOT" >&2
   exit 1
 fi
 
-INPUT_DIR="$(resolve_dir_path "$INPUT_DIR")"
+INPUT_DIR="$(resolve_existing_dir_path "$INPUT_DIR")"
 OUTPUT_DIR="$(resolve_dir_path "$OUTPUT_DIR")"
 
 if [[ ! -d "$INPUT_DIR" ]]; then
