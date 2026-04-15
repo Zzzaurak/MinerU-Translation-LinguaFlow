@@ -26,10 +26,13 @@ def test_mixed_reference_styles(tmp_path: Path) -> None:
     )
 
     target_dir = tmp_path / "images"
-    result = filter_referenced_images(doc, source_root, target_dir)
+    result = filter_referenced_images(doc, source_root, target_dir, target_image_subdir="images")
 
     assert sorted(result.kept_images) == ["html.png", "inline.png", "ref.png"]
     assert result.missing_images == []
+    assert "images/inline.png" in result.rewritten_markdown
+    assert "images/ref.png" in result.rewritten_markdown
+    assert "images/html.png" in result.rewritten_markdown
     assert (target_dir / "inline.png").exists()
     assert (target_dir / "ref.png").exists()
     assert (target_dir / "html.png").exists()
@@ -44,11 +47,11 @@ def test_missing_referenced_image_flagged(tmp_path: Path) -> None:
     doc.write_text("![a](exists.png)\n![b](missing.png)", encoding="utf-8")
 
     target_dir = tmp_path / "images"
-    result = filter_referenced_images(doc, source_root, target_dir)
+    result = filter_referenced_images(doc, source_root, target_dir, target_image_subdir="images")
 
     assert result.kept_images == ["exists.png"]
     assert result.missing_images == ["missing.png"]
-    assert "exists.png" in result.rewritten_markdown
+    assert "images/exists.png" in result.rewritten_markdown
     assert (target_dir / "exists.png").exists()
     assert not (target_dir / "missing.png").exists()
 
@@ -63,11 +66,47 @@ def test_rewrites_nested_image_reference_to_flat_target(tmp_path: Path) -> None:
     doc.write_text("![n](assets/img/n.png)", encoding="utf-8")
 
     target_dir = tmp_path / "images"
+    result = filter_referenced_images(doc, source_root, target_dir, target_image_subdir="images")
+
+    assert result.kept_images == ["assets/img/n.png"]
+    assert "![n](images/n.png)" in result.rewritten_markdown
+    assert (target_dir / "n.png").exists()
+
+
+def test_default_subdir_preserves_flat_behavior(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    nested = source_root / "assets" / "img"
+    nested.mkdir(parents=True)
+    (nested / "n.png").write_bytes(b"n")
+
+    doc = tmp_path / "document.md"
+    doc.write_text("![n](assets/img/n.png)", encoding="utf-8")
+
+    target_dir = tmp_path / "images"
     result = filter_referenced_images(doc, source_root, target_dir)
 
     assert result.kept_images == ["assets/img/n.png"]
     assert "![n](n.png)" in result.rewritten_markdown
+    assert "![n](images/n.png)" not in result.rewritten_markdown
     assert (target_dir / "n.png").exists()
+
+
+def test_custom_subdir_applies_prefix(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    nested = source_root / "sub"
+    nested.mkdir(parents=True)
+    (nested / "x.png").write_bytes(b"x")
+
+    doc = tmp_path / "document.md"
+    doc.write_text("![x](sub/x.png)", encoding="utf-8")
+
+    target_dir = tmp_path / "images"
+    result = filter_referenced_images(doc, source_root, target_dir, target_image_subdir="assets")
+
+    assert result.kept_images == ["sub/x.png"]
+    assert "![x](assets/x.png)" in result.rewritten_markdown
+    assert "![x](x.png)" not in result.rewritten_markdown
+    assert (target_dir / "x.png").exists()
 
 
 def test_blocks_parent_traversal_reference(tmp_path: Path) -> None:

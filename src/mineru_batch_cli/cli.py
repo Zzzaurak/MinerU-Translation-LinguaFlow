@@ -687,6 +687,7 @@ def _run_pipeline(
                         normalized.document_path,
                         artifact.extracted_dir,
                         filtered_dir,
+                        target_image_subdir="images",
                     )
                     missing_images = image_result.missing_images
                     kept_images_count = len(image_result.kept_images)

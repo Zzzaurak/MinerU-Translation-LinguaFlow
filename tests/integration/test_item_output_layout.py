@@ -7,7 +7,7 @@ from mineru_batch_cli.output_writer import build_item_slug, write_item_output
 
 def test_item_layout_contract(tmp_path: Path) -> None:
     document_source = tmp_path / "source.md"
-    document_source.write_text("# doc", encoding="utf-8")
+    document_source.write_text("# doc\n\n![a](images/a.png)", encoding="utf-8")
 
     images_source = tmp_path / "images-src"
     images_source.mkdir()
@@ -34,6 +34,9 @@ def test_item_layout_contract(tmp_path: Path) -> None:
     assert output.source_document_path is None
     assert output.source_move_status is None
     assert output.source_move_error is None
+    
+    content = output.document_path.read_text(encoding="utf-8")
+    assert "images/a.png" in content
 
 
 def test_item_layout_contract_writes_translated_markdown_when_provided(

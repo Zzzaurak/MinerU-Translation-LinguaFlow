@@ -19,7 +19,7 @@ class ImageFilterResult:
     rewritten_markdown: str
 
 
-def filter_referenced_images(document_path: Path, source_image_root: Path, target_image_dir: Path) -> ImageFilterResult:
+def filter_referenced_images(document_path: Path, source_image_root: Path, target_image_dir: Path, *, target_image_subdir: str = "") -> ImageFilterResult:
     text = document_path.read_text(encoding="utf-8")
     referenced = _extract_image_paths(text)
 
@@ -45,7 +45,8 @@ def filter_referenced_images(document_path: Path, source_image_root: Path, targe
         target = target_image_dir / normalized.name
         shutil.copy2(source, target)
         kept.append(normalized.as_posix())
-        replacements[normalized.as_posix()] = normalized.name
+        target_ref = f"{target_image_subdir}/{normalized.name}" if target_image_subdir else normalized.name
+        replacements[normalized.as_posix()] = target_ref
 
     rewritten = _rewrite_markdown_image_refs(text, replacements)
     document_path.write_text(rewritten, encoding="utf-8")

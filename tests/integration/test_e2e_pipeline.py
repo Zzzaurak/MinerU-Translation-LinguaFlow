@@ -206,6 +206,13 @@ def test_e2e_pipeline_success(tmp_path: Path, monkeypatch) -> None:
     item_names = sorted(Path(item["document_path"]).name for item in manifest["items"])
     assert item_names == ["doc-a.md", "doc-b.md"]
 
+    # Verify markdown image references include images/ prefix
+    for item in manifest["items"]:
+        doc_path = Path(item["document_path"])
+        if doc_path.exists():
+            content = doc_path.read_text(encoding="utf-8")
+            assert "images/kept.png" in content, f"Expected 'images/kept.png' in {doc_path}"
+
 
 def test_one_failure_batch_continues(tmp_path: Path, monkeypatch) -> None:
     input_dir = tmp_path / "in"
@@ -284,7 +291,7 @@ def test_pipeline_translation_enabled_writes_translated_document(
 
     def fake_translate(self, markdown: str, *, target_language: str) -> str:
         calls.append(target_language)
-        assert "kept.png" in markdown
+        assert "images/kept.png" in markdown
         return markdown.replace("kept.png", "kept.png") + "\n\n翻译完成"
 
     monkeypatch.setattr(
